@@ -25,14 +25,14 @@ st.markdown("""
 # ==========================================
 st.sidebar.title("⚙️ إعدادات النظام")
 
-# قراءة المفتاح من Streamlit Secrets أو الإدخال اليدوي
+# قراءة المفتاح من Streamlit Secrets أو من مدخل القائمة الجانبية
 secret_key = st.secrets.get("GEMINI_API_KEY", "")
 api_key_input = st.sidebar.text_input("Gemini API Key / Token", value=secret_key, type="password")
 
 api_key = api_key_input.strip() if api_key_input else secret_key.strip()
 
 if not api_key:
-    st.sidebar.warning("⚠️ يرجى إدخال المفتاح في Secrets أو في القائمة الجانبية.")
+    st.sidebar.warning("⚠️ يرجى التأكد من إدخال المفتاح في Secrets أو القائمة الجانبية.")
 
 st.sidebar.markdown("---")
 st.sidebar.info("💡 هذا التطبيق مخصص لفريق الجودة والتدقيق التشغيلي لتسهيل تحليل الأسباب الجذرية لتقييمات العملاء.")
@@ -61,7 +61,7 @@ with col_input:
     analyze_btn = st.button("🚀 بدء التدقيق العميق واستخراج التبرير", use_container_width=True, type="primary")
 
 # ==========================================
-# 4. البرومبت والربط مع التكيف مع نوع المفتاح
+# 4. البرومبت والمحرك الذكي للتواصل مع API
 # ==========================================
 PROMPT_TEMPLATE = """
 أنت خبير تدقيق تشغيلي وتجربة عملاء (Senior CX & Operations Auditor) في شركة "مسمار".
@@ -75,21 +75,21 @@ PROMPT_TEMPLATE = """
 - التقييم العام: {overall_rating}/5
 
 التعليمات الصارمة للتحليل:
-1. ابدأ فوراً بالسبب التشغيلي المباشر دون ذكر ديباجة درجات التقييمات.
-2. تتبع الأسباب الجذرية من التذاكر ومحادثات الشات والتسلسل الزمني وعروض الأسعار.
-3. صغ التبرير بأسلوب تشغيلي طبيعي ومباشر من 4 إلى 5 سطور فقط جاهز للنسخ.
+1. ابدأ فوراً بالسبب التشغيلي المباشر للتقييمات المنخفضة دون ذكر ديباجة درجات التقييمات أو سرد الأرقام في البداية.
+2. تتبع الأسباب الجذرية الحقيقية من التذاكر ومحادثات الشات والتسلسل الزمني وعروض الأسعار.
+3. صغ التبرير بأسلوب تشغيلي طبيعي ومباشر من 4 إلى 5 سطور فقط جاهز للنسخ لمدير العمليات.
 
 قسّم المخرجات إلى قسمين باستخدام الفاصل بالضبط:
 ===SPLIT===
 
-القسم الأول: التبرير التشغيلي المباشر (4-5 سطور).
+القسم الأول: التبرير التشغيلي المباشر (4-5 سطور صافية).
 ===SPLIT===
 القسم الثاني: الأدلة والوقائع التفصيلية (تحليل التذاكر، الشات، التسعير، والمواعيد).
 """
 
 if analyze_btn:
     if not api_key:
-        st.error("❌ لا يمكن إجراء التحليل بدون المفتاح!")
+        st.error("❌ لا يمكن إجراء التحليل بدون مفتاح API!")
     else:
         with st.spinner("⏳ جاري تحليل بيانات الطلب واستخراج التبريرات..."):
             prompt_text = PROMPT_TEMPLATE.format(
@@ -101,17 +101,6 @@ if analyze_btn:
                 overall_rating=overall_rating
             )
             
-            headers = {"Content-Type": "application/json"}
-            
-            # التكيف التلقائي مع نوع المفتاح
-            if api_key.startswith("AQ."):
-                # مفتاح من نوع OAuth Token
-                url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent"
-                headers["Authorization"] = f"Bearer {api_key}"
-            else:
-                # مفتاح من نوع API Key عادي
-                url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
-
             payload = {
                 "contents": [{"parts": [{"text": prompt_text}]}],
                 "generationConfig": {
@@ -120,9 +109,21 @@ if analyze_btn:
                 }
             }
             
+            # محاولة الربط باستخدام إرسال المفتاح كـ Parameter وفي الـ Header في وقت واحد لضمان الاستجابة
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
+            headers = {
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {api_key}"
+            }
+            
             try:
                 response = requests.post(url, headers=headers, json=payload, timeout=60)
                 
+                # إذا فشلت المحاولة بالأولى، نحاول بالرابط الصافي بدون Header
+                if response.status_code != 200:
+                    clean_headers = {"Content-Type": "application/json"}
+                    response = requests.post(url, headers=clean_headers, json=payload, timeout=60)
+
                 if response.status_code == 200:
                     res_data = response.json()
                     ai_text = res_data["candidates"][0]["content"]["parts"][0]["text"]
