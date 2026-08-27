@@ -25,18 +25,14 @@ st.markdown("""
 # ==========================================
 st.sidebar.title("⚙️ إعدادات النظام")
 
-# قراءة المفتاح من Streamlit Secrets إن وجد أو السماح بالإدخال اليدوي
-default_api_key = st.secrets.get("GEMINI_API_KEY", "")
+# قراءة المفتاح من Streamlit Secrets أو الإدخال اليدوي
+secret_key = st.secrets.get("GEMINI_API_KEY", "")
+api_key_input = st.sidebar.text_input("Gemini API Key / Token", value=secret_key, type="password")
 
-api_key = st.sidebar.text_input(
-    "Gemini API Key", 
-    value=default_api_key, 
-    type="password",
-    help="أدخل مفتاح Gemini API الخاص بك (يجب أن يبدأ بـ AIzaSy...)"
-)
+api_key = api_key_input.strip() if api_key_input else secret_key.strip()
 
 if not api_key:
-    st.sidebar.warning("⚠️ يرجى إدخال Gemini API Key في القائمة الجانبية للبدء.")
+    st.sidebar.warning("⚠️ يرجى إدخال المفتاح في Secrets أو في القائمة الجانبية.")
 
 st.sidebar.markdown("---")
 st.sidebar.info("💡 هذا التطبيق مخصص لفريق الجودة والتدقيق التشغيلي لتسهيل تحليل الأسباب الجذرية لتقييمات العملاء.")
@@ -65,7 +61,7 @@ with col_input:
     analyze_btn = st.button("🚀 بدء التدقيق العميق واستخراج التبرير", use_container_width=True, type="primary")
 
 # ==========================================
-# 4. البرومبت المتطور والربط مع Gemini API
+# 4. البرومبت والربط مع التكيف مع نوع المفتاح
 # ==========================================
 PROMPT_TEMPLATE = """
 أنت خبير تدقيق تشغيلي وتجربة عملاء (Senior CX & Operations Auditor) في شركة "مسمار".
@@ -79,21 +75,21 @@ PROMPT_TEMPLATE = """
 - التقييم العام: {overall_rating}/5
 
 التعليمات الصارمة للتحليل:
-1. ابدأ فوراً بالسبب التشغيلي المباشر والربط السببي الحقيقي للتقييمات المنخفضة دون ذكر ديباجة درجات التقييمات أو سرد الأرقام في البداية.
-2. تتبع الأسباب الجذرية الحقيقية من التذاكر (خاصة خانة Description و Result) ومحادثات الشات بين الموظف والمزود والتسلسل الزمني وعروض الأسعار.
-3. صغ التبرير بأسلوب تشغيلي طبيعي ومباشر من 4 إلى 5 سطور فقط جاهز للنسخ لمدير العمليات.
+1. ابدأ فوراً بالسبب التشغيلي المباشر دون ذكر ديباجة درجات التقييمات.
+2. تتبع الأسباب الجذرية من التذاكر ومحادثات الشات والتسلسل الزمني وعروض الأسعار.
+3. صغ التبرير بأسلوب تشغيلي طبيعي ومباشر من 4 إلى 5 سطور فقط جاهز للنسخ.
 
 قسّم المخرجات إلى قسمين باستخدام الفاصل بالضبط:
 ===SPLIT===
 
-القسم الأول: التبرير التشغيلي المباشر (4-5 سطور صافية).
+القسم الأول: التبرير التشغيلي المباشر (4-5 سطور).
 ===SPLIT===
 القسم الثاني: الأدلة والوقائع التفصيلية (تحليل التذاكر، الشات، التسعير، والمواعيد).
 """
 
 if analyze_btn:
     if not api_key:
-        st.error("❌ لا يمكن إجراء التحليل بدون إدخال Gemini API Key!")
+        st.error("❌ لا يمكن إجراء التحليل بدون المفتاح!")
     else:
         with st.spinner("⏳ جاري تحليل بيانات الطلب واستخراج التبريرات..."):
             prompt_text = PROMPT_TEMPLATE.format(
@@ -105,11 +101,17 @@ if analyze_btn:
                 overall_rating=overall_rating
             )
             
-            # تنظيف المفتاح وإرساله كـ Query Parameter بدقة
-            clean_api_key = api_key.strip()
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={clean_api_key}"
-            
             headers = {"Content-Type": "application/json"}
+            
+            # التكيف التلقائي مع نوع المفتاح
+            if api_key.startswith("AQ."):
+                # مفتاح من نوع OAuth Token
+                url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent"
+                headers["Authorization"] = f"Bearer {api_key}"
+            else:
+                # مفتاح من نوع API Key عادي
+                url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
+
             payload = {
                 "contents": [{"parts": [{"text": prompt_text}]}],
                 "generationConfig": {
@@ -125,7 +127,6 @@ if analyze_btn:
                     res_data = response.json()
                     ai_text = res_data["candidates"][0]["content"]["parts"][0]["text"]
                     
-                    # فصل التبرير عن الأسباب التفصيلية
                     if "===SPLIT===" in ai_text:
                         parts = ai_text.split("===SPLIT===")
                         justification = parts[1].strip() if len(parts) > 1 else ai_text
@@ -151,7 +152,6 @@ with col_result:
     if "justification" in st.session_state:
         st.markdown("##### 📝 التبرير التشغيلي (جاهز للنسخ لمدير العمليات):")
         
-        # صندوق نصي سهل للنسخ بـ Ctrl+C بدون رسائل كاش
         st.text_area(
             label="حدد النص بالكامل واضغط Ctrl+C للنسخ",
             value=st.session_state["justification"],
