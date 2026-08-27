@@ -25,14 +25,14 @@ st.markdown("""
 # ==========================================
 st.sidebar.title("⚙️ إعدادات النظام")
 
-# قراءة المفتاح من Streamlit Secrets أو من الإدخال اليدوي
+# قراءة المفتاح من Streamlit Secrets إن وجد أو السماح بالإدخال اليدوي
 default_api_key = st.secrets.get("GEMINI_API_KEY", "")
 
 api_key = st.sidebar.text_input(
     "Gemini API Key", 
     value=default_api_key, 
     type="password",
-    help="أدخل مفتاح Gemini API الخاص بك هنا"
+    help="أدخل مفتاح Gemini API الخاص بك (يجب أن يبدأ بـ AIzaSy...)"
 )
 
 if not api_key:
@@ -79,9 +79,9 @@ PROMPT_TEMPLATE = """
 - التقييم العام: {overall_rating}/5
 
 التعليمات الصارمة للتحليل:
-1. ابدأ فوراً بالسبب التشغيلي المباشر للتقييمات المنخفضة دون ذكر ديباجة درجات التقييمات.
-2. تتبع الأسباب الجذرية من التذاكر ومحادثات الشات والتسلسل الزمني للطلب.
-3. صغ التبرير بأسلوب طبيعي ومباشر من 4 إلى 5 سطور فقط جاهز للنسخ.
+1. ابدأ فوراً بالسبب التشغيلي المباشر والربط السببي الحقيقي للتقييمات المنخفضة دون ذكر ديباجة درجات التقييمات أو سرد الأرقام في البداية.
+2. تتبع الأسباب الجذرية الحقيقية من التذاكر (خاصة خانة Description و Result) ومحادثات الشات بين الموظف والمزود والتسلسل الزمني وعروض الأسعار.
+3. صغ التبرير بأسلوب تشغيلي طبيعي ومباشر من 4 إلى 5 سطور فقط جاهز للنسخ لمدير العمليات.
 
 قسّم المخرجات إلى قسمين باستخدام الفاصل بالضبط:
 ===SPLIT===
@@ -105,8 +105,9 @@ if analyze_btn:
                 overall_rating=overall_rating
             )
             
-            # تصحيح الرابط وإضافة المفتاح كـ Query Parameter
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key.strip()}"
+            # تنظيف المفتاح وإرساله كـ Query Parameter بدقة
+            clean_api_key = api_key.strip()
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={clean_api_key}"
             
             headers = {"Content-Type": "application/json"}
             payload = {
@@ -150,7 +151,7 @@ with col_result:
     if "justification" in st.session_state:
         st.markdown("##### 📝 التبرير التشغيلي (جاهز للنسخ لمدير العمليات):")
         
-        # صندوق نصي سهل للنسخ بـ Ctrl+C بدون أخطاء
+        # صندوق نصي سهل للنسخ بـ Ctrl+C بدون رسائل كاش
         st.text_area(
             label="حدد النص بالكامل واضغط Ctrl+C للنسخ",
             value=st.session_state["justification"],
