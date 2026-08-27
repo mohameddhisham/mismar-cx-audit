@@ -1,5 +1,6 @@
 import streamlit as st
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 
 # ==========================================
 # 1. إعدادات الصفحة والهوية البصرية لشركة مسمار
@@ -59,7 +60,7 @@ with col_input:
     analyze_btn = st.button("🚀 بدء التدقيق العميق واستخراج التبرير", use_container_width=True, type="primary")
 
 # ==========================================
-# 4. البرومبت واستدعاء نموذج الذكاء الاصطناعي
+# 4. البرومبت واستدعاء الذكاء الاصطناعي
 # ==========================================
 PROMPT_TEMPLATE = """
 أنت خبير تدقيق تشغيلي وتجربة عملاء (Senior CX & Operations Auditor) في شركة "مسمار".
@@ -91,10 +92,7 @@ if analyze_btn:
     else:
         with st.spinner("⏳ جاري تحليل بيانات الطلب واستخراج التبريرات..."):
             try:
-                genai.configure(api_key=api_key)
-                
-                # تحديث الموديل للنموذج المعتمد المطلوب من جوجل
-                model = genai.GenerativeModel('gemini-2.5-flash')
+                client = genai.Client(api_key=api_key)
                 
                 prompt_text = PROMPT_TEMPLATE.format(
                     order_id=order_id,
@@ -105,7 +103,15 @@ if analyze_btn:
                     overall_rating=overall_rating
                 )
                 
-                response = model.generate_content(prompt_text)
+                response = client.models.generate_content(
+                    model='gemini-2.5-flash',
+                    contents=prompt_text,
+                    config=types.GenerateContentConfig(
+                        temperature=0.45,
+                        top_p=0.9
+                    )
+                )
+                
                 ai_text = response.text
                 
                 if "===SPLIT===" in ai_text:
