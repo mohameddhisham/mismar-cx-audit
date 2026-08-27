@@ -108,20 +108,12 @@ if analyze_btn:
                 }
             }
             
-            # تم تحديث اسم الموديل المعتمد إلى gemini-2.5-flash
+            # تم التحديث للنموذج المعتمد gemini-2.5-flash
             url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={api_key}"
-            headers = {
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {api_key}"
-            }
+            headers = {"Content-Type": "application/json"}
             
             try:
                 response = requests.post(url, headers=headers, json=payload, timeout=60)
-                
-                # تجربة بدون Authorization Header في حال رفض المفتاح الـ Bearer
-                if response.status_code != 200:
-                    clean_headers = {"Content-Type": "application/json"}
-                    response = requests.post(url, headers=clean_headers, json=payload, timeout=60)
 
                 if response.status_code == 200:
                     res_data = response.json()
