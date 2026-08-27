@@ -1,6 +1,6 @@
 import streamlit as st
-import requests
-import json
+from google import genai
+from google.genai import types
 
 # ==========================================
 # 1. إعدادات الصفحة والهوية البصرية لشركة مسمار (MisMar)
@@ -25,13 +25,14 @@ st.markdown("""
 # ==========================================
 st.sidebar.title("⚙️ إعدادات النظام")
 
+# قراءة المفتاح من Streamlit Secrets أو من مدخل القائمة الجانبية
 secret_key = st.secrets.get("GEMINI_API_KEY", "")
-api_key_input = st.sidebar.text_input("Gemini API Key / Token", value=secret_key, type="password")
+api_key_input = st.sidebar.text_input("Gemini API Key", value=secret_key, type="password")
 
 api_key = api_key_input.strip() if api_key_input else secret_key.strip()
 
 if not api_key:
-    st.sidebar.warning("⚠️ يرجى التأكد من إدخال المفتاح في Secrets أو القائمة الجانبية.")
+    st.sidebar.warning("⚠️ يرجى إدخال Gemini API Key للبدء.")
 
 st.sidebar.markdown("---")
 st.sidebar.info("💡 هذا التطبيق مخصص لفريق الجودة والتدقيق التشغيلي لتسهيل تحليل الأسباب الجذرية لتقييمات العملاء.")
@@ -60,7 +61,7 @@ with col_input:
     analyze_btn = st.button("🚀 بدء التدقيق العميق واستخراج التبرير", use_container_width=True, type="primary")
 
 # ==========================================
-# 4. البرومبت والمحرك الذكي للتواصل مع API
+# 4. البرومبت واستدعاء المكتبة الرسمية
 # ==========================================
 PROMPT_TEMPLATE = """
 أنت خبير تدقيق تشغيلي وتجربة عملاء (Senior CX & Operations Auditor) في شركة "مسمار".
@@ -88,7 +89,7 @@ PROMPT_TEMPLATE = """
 
 if analyze_btn:
     if not api_key:
-        st.error("❌ لا يمكن إجراء التحليل بدون مفتاح API!")
+        st.error("❌ لا يمكن إجراء التحليل بدون إدخال المفتاح!")
     else:
         with st.spinner("⏳ جاري تحليل بيانات الطلب واستخراج التبريرات..."):
             prompt_text = PROMPT_TEMPLATE.format(
@@ -100,40 +101,37 @@ if analyze_btn:
                 overall_rating=overall_rating
             )
             
-            payload = {
-                "contents": [{"parts": [{"text": prompt_text}]}],
-                "generationConfig": {
-                    "temperature": 0.45,
-                    "topP": 0.9
-                }
-            }
-            
-            # تم التحديث للنموذج المعتمد gemini-2.5-flash
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={api_key}"
-            headers = {"Content-Type": "application/json"}
-            
             try:
-                response = requests.post(url, headers=headers, json=payload, timeout=60)
-
-                if response.status_code == 200:
-                    res_data = response.json()
-                    ai_text = res_data["candidates"][0]["content"]["parts"][0]["text"]
-                    
-                    if "===SPLIT===" in ai_text:
-                        parts = ai_text.split("===SPLIT===")
-                        justification = parts[1].strip() if len(parts) > 1 else ai_text
-                        details = parts[2].strip() if len(parts) > 2 else ""
-                    else:
-                        justification = ai_text
-                        details = ""
-                    
-                    st.session_state["justification"] = justification
-                    st.session_state["details"] = details
-                    st.success("✅ تم التحليل بنجاح!")
+                # إنشاء العميل بباكج جوجل الرسمي
+                client = genai.Client(api_key=api_key)
+                
+                # إرسال الطلب لنموذج gemini-2.5-flash المحدث
+                response = client.models.generate_content(
+                    model='gemini-2.5-flash',
+                    contents=prompt_text,
+                    config=types.GenerateContentConfig(
+                        temperature=0.45,
+                        top_p=0.9
+                    )
+                )
+                
+                ai_text = response.text
+                
+                # تقطيع النص للاستخراج
+                if "===SPLIT===" in ai_text:
+                    parts = ai_text.split("===SPLIT===")
+                    justification = parts[1].strip() if len(parts) > 1 else ai_text
+                    details = parts[2].strip() if len(parts) > 2 else ""
                 else:
-                    st.error(f"❌ خطأ من جوجل API ({response.status_code}): {response.text}")
+                    justification = ai_text
+                    details = ""
+                
+                st.session_state["justification"] = justification
+                st.session_state["details"] = details
+                st.success("✅ تم التحليل بنجاح!")
+
             except Exception as e:
-                st.error(f"❌ حدث خطأ أثناء الاتصال: {str(e)}")
+                st.error(f"❌ حدث خطأ أثناء الاتصال بالذكاء الاصطناعي: {str(e)}")
 
 # ==========================================
 # 5. عرض النتائج
@@ -151,7 +149,7 @@ with col_result:
         )
         
         if st.session_state.get("details"):
-            with st.expander("🔍 الأدلة والوقائع التفصيلية (للمراجعة والتحقق)", expanded=True):
+            with st.expander("🔍 الأدلة والوقائع التفصيلية (ل للمراجعة والتحقق)", expanded=True):
                 st.markdown(st.session_state["details"])
     else:
         st.info("👈 قم بإدخال رقم الطلب والتقييمات، ثم اضغط على زر التحليل لتعرض النتائج هنا.")
