@@ -25,7 +25,6 @@ st.markdown("""
 # ==========================================
 st.sidebar.title("⚙️ إعدادات النظام")
 
-# قراءة المفتاح من Streamlit Secrets أو من مدخل القائمة الجانبية
 secret_key = st.secrets.get("GEMINI_API_KEY", "")
 api_key_input = st.sidebar.text_input("Gemini API Key / Token", value=secret_key, type="password")
 
@@ -109,8 +108,8 @@ if analyze_btn:
                 }
             }
             
-            # محاولة الربط باستخدام إرسال المفتاح كـ Parameter وفي الـ Header في وقت واحد لضمان الاستجابة
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
+            # تم تحديث اسم الموديل المعتمد إلى gemini-2.5-flash
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={api_key}"
             headers = {
                 "Content-Type": "application/json",
                 "Authorization": f"Bearer {api_key}"
@@ -119,7 +118,7 @@ if analyze_btn:
             try:
                 response = requests.post(url, headers=headers, json=payload, timeout=60)
                 
-                # إذا فشلت المحاولة بالأولى، نحاول بالرابط الصافي بدون Header
+                # تجربة بدون Authorization Header في حال رفض المفتاح الـ Bearer
                 if response.status_code != 200:
                     clean_headers = {"Content-Type": "application/json"}
                     response = requests.post(url, headers=clean_headers, json=payload, timeout=60)
