@@ -25,7 +25,6 @@ st.markdown("""
 # ==========================================
 st.sidebar.title("⚙️ إعدادات النظام")
 
-# قراءة المفتاح من Streamlit Secrets أو من مدخل القائمة الجانبية
 secret_key = st.secrets.get("GEMINI_API_KEY", "")
 api_key_input = st.sidebar.text_input("Gemini API Key", value=secret_key, type="password")
 
@@ -102,10 +101,9 @@ if analyze_btn:
             )
             
             try:
-                # إنشاء العميل بباكج جوجل الرسمي
                 client = genai.Client(api_key=api_key)
                 
-                # إرسال الطلب لنموذج gemini-2.5-flash المحدث
+                # تم التعديل الفعلي هنا لنفس النموذج المستقر 2.5
                 response = client.models.generate_content(
                     model='gemini-2.5-flash',
                     contents=prompt_text,
@@ -117,7 +115,6 @@ if analyze_btn:
                 
                 ai_text = response.text
                 
-                # تقطيع النص للاستخراج
                 if "===SPLIT===" in ai_text:
                     parts = ai_text.split("===SPLIT===")
                     justification = parts[1].strip() if len(parts) > 1 else ai_text
@@ -149,7 +146,7 @@ with col_result:
         )
         
         if st.session_state.get("details"):
-            with st.expander("🔍 الأدلة والوقائع التفصيلية (ل للمراجعة والتحقق)", expanded=True):
+            with st.expander("🔍 الأدلة والوقائع التفصيلية (للمراجعة والتحقق)", expanded=True):
                 st.markdown(st.session_state["details"])
     else:
         st.info("👈 قم بإدخال رقم الطلب والتقييمات، ثم اضغط على زر التحليل لتعرض النتائج هنا.")
