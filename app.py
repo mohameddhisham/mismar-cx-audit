@@ -103,6 +103,7 @@ if analyze_btn:
                     overall_rating=overall_rating
                 )
                 
+                # استخدام النموذج الافتراضي والمستقر gemini-2.5-flash
                 response = client.models.generate_content(
                     model='gemini-2.5-flash',
                     contents=prompt_text,
@@ -127,7 +128,7 @@ if analyze_btn:
                 st.success("✅ تم التحليل بنجاح!")
 
             except Exception as e:
-                st.error(f"❌ حدث خطأ: {str(e)}")
+                st.error(f"❌ حدث خطأ أثناء الاتصال بالذكاء الاصطناعي: {str(e)}")
 
 # ==========================================
 # 5. عرض النتائج
