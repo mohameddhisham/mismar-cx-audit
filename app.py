@@ -7,19 +7,22 @@ import google.generativeai as genai
 st.set_page_config(
     page_title="نظام تدقيق الطلبات - مسمار",
     page_icon="🔧",
-    layout="wide"
+    layout="wide",
+    initial_sidebar_state="expanded"
 )
 
+# هيدر التطبيق
 st.markdown("""
 <div style="background-color: #0d233a; padding: 20px; border-radius: 12px; border-right: 6px solid #2ecc71; margin-bottom: 25px; text-align: center; color: white;">
     <h1 style="margin: 0; font-size: 28px;">🔍 نظام تدقيق الطلبات وتجربة العملاء (MisMar CX Audit)</h1>
+    <p style="margin-top: 8px; color: #bdc3c7; font-size: 15px;">استخراج التبريرات التشغيلية والأسباب الجذرية بدقة عالية</p>
 </div>
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 2. القائمة الجانبية والـ API Key
+# 2. القائمة الجانبية وإدارة الـ API Key
 # ==========================================
-st.sidebar.title("⚙️ الإعدادات")
+st.sidebar.title("⚙️ إعدادات النظام")
 
 secret_key = st.secrets.get("GEMINI_API_KEY", "")
 api_key_input = st.sidebar.text_input("Gemini API Key", value=secret_key, type="password")
@@ -27,16 +30,22 @@ api_key_input = st.sidebar.text_input("Gemini API Key", value=secret_key, type="
 api_key = api_key_input.strip() if api_key_input else secret_key.strip()
 
 if not api_key:
-    st.sidebar.warning("⚠️ يرجى إدخال المفتاح للبدء.")
+    st.sidebar.warning("⚠️ يرجى إدخال Gemini API Key للبدء.")
+
+st.sidebar.markdown("---")
+st.sidebar.info("💡 هذا التطبيق مخصص لفريق الجودة والتدقيق التشغيلي لتسهيل تحليل الأسباب الجذرية لتقييمات العملاء.")
 
 # ==========================================
-# 3. بيانات الطلب
+# 3. إدخال بيانات الطلب والتقييمات
 # ==========================================
 col_input, col_result = st.columns([1, 1], gap="large")
 
 with col_input:
     st.subheader("📋 بيانات الطلب والتقييمات")
-    order_id = st.number_input("رقم الطلب", min_value=1000000, max_value=9999999, value=1005354)
+    
+    order_id = st.number_input("رقم الطلب (Order ID)", min_value=1000000, max_value=9999999, value=1005354, step=1)
+    
+    st.markdown("##### ⭐️ تقييمات العميل المدخلة:")
     
     col_r1, col_r2 = st.columns(2)
     with col_r1:
@@ -47,39 +56,45 @@ with col_input:
         cs_rating = st.slider("خدمة العملاء 🎧", 1, 5, 4)
         overall_rating = st.slider("التقييم العام ⭐️", 1, 5, 3)
 
-    analyze_btn = st.button("🚀 بدء التدقيق العميق", use_container_width=True, type="primary")
+    analyze_btn = st.button("🚀 بدء التدقيق العميق واستخراج التبرير", use_container_width=True, type="primary")
 
+# ==========================================
+# 4. البرومبت واستدعاء نموذج الذكاء الاصطناعي
+# ==========================================
 PROMPT_TEMPLATE = """
-أنت خبير تدقيق تشغيلي وتجربة عملاء في شركة "مسمار".
-مهمتك إجراء تدقيق عميق لبيانات الطلب رقم #{order_id}.
+أنت خبير تدقيق تشغيلي وتجربة عملاء (Senior CX & Operations Auditor) في شركة "مسمار".
+مهمتك إجراء تدقيق عميق وشامل لبيانات الطلب رقم #{order_id}.
 
-التقييمات:
-- الوقت: {time_rating}/5, السعر: {price_rating}/5, الجودة: {quality_rating}/5, خدمة العملاء: {cs_rating}/5, التقييم العام: {overall_rating}/5
+التقييمات المدخلة للطلب:
+- الوقت: {time_rating}/5
+- السعر: {price_rating}/5
+- الجودة: {quality_rating}/5
+- خدمة العملاء: {cs_rating}/5
+- التقييم العام: {overall_rating}/5
 
-التعليمات:
-1. ابدأ فوراً بالسبب التشغيلي المباشر للتقييمات المنخفضة بدون ديباجة.
-2. تتبع الأسباب الجذرية وصغ التبرير في 4-5 سطور جاهزة للنسخ.
+التعليمات الصارمة للتحليل:
+1. ابدأ فوراً بالسبب التشغيلي المباشر للتقييمات المنخفضة دون ذكر ديباجة درجات التقييمات أو سرد الأرقام في البداية.
+2. تتبع الأسباب الجذرية الحقيقية من التذاكر ومحادثات الشات والتسلسل الزمني وعروض الأسعار.
+3. صغ التبرير بأسلوب تشغيلي طبيعي ومباشر من 4 إلى 5 سطور فقط جاهز للنسخ لمدير العمليات.
 
-قسّم المخرجات بـ:
+قسّم المخرجات إلى قسمين باستخدام الفاصل بالضبط:
 ===SPLIT===
-القسم الأول: التبرير المباشر.
+
+القسم الأول: التبرير التشغيلي المباشر (4-5 سطور صافية).
 ===SPLIT===
-القسم الثاني: الأدلة والوقائع التفصيلية.
+القسم الثاني: الأدلة والوقائع التفصيلية (تحليل التذاكر، الشات، التسعير، والمواعيد).
 """
 
-# ==========================================
-# 4. معالجة الطلب
-# ==========================================
 if analyze_btn:
     if not api_key:
-        st.error("❌ المفتاح مفقود!")
+        st.error("❌ لا يمكن إجراء التحليل بدون إدخال المفتاح!")
     else:
-        with st.spinner("⏳ جاري التحليل..."):
+        with st.spinner("⏳ جاري تحليل بيانات الطلب واستخراج التبريرات..."):
             try:
                 genai.configure(api_key=api_key)
                 
-                # ربط بالموديل المباشر المتاح
-                model = genai.GenerativeModel('gemini-1.5-flash')
+                # استخدام النموذج المحدث والمستقر
+                model = genai.GenerativeModel('gemini-2.5-flash')
                 
                 prompt_text = PROMPT_TEMPLATE.format(
                     order_id=order_id,
@@ -95,12 +110,14 @@ if analyze_btn:
                 
                 if "===SPLIT===" in ai_text:
                     parts = ai_text.split("===SPLIT===")
-                    st.session_state["justification"] = parts[1].strip()
-                    st.session_state["details"] = parts[2].strip() if len(parts) > 2 else ""
+                    justification = parts[1].strip() if len(parts) > 1 else ai_text
+                    details = parts[2].strip() if len(parts) > 2 else ""
                 else:
-                    st.session_state["justification"] = ai_text
-                    st.session_state["details"] = ""
+                    justification = ai_text
+                    details = ""
                 
+                st.session_state["justification"] = justification
+                st.session_state["details"] = details
                 st.success("✅ تم التحليل بنجاح!")
 
             except Exception as e:
@@ -110,9 +127,19 @@ if analyze_btn:
 # 5. عرض النتائج
 # ==========================================
 with col_result:
-    st.subheader("📊 المخرجات")
+    st.subheader("📊 مخرجات التقرير والتدقيق")
+    
     if "justification" in st.session_state:
-        st.text_area("التبرير التشغيلي (Ctrl+C للنسخ):", value=st.session_state["justification"], height=140)
+        st.markdown("##### 📝 التبرير التشغيلي (جاهز للنسخ لمدير العمليات):")
+        
+        st.text_area(
+            label="حدد النص بالكامل واضغط Ctrl+C للنسخ",
+            value=st.session_state["justification"],
+            height=140
+        )
+        
         if st.session_state.get("details"):
-            with st.expander("🔍 الأدلة التفصيلية", expanded=True):
+            with st.expander("🔍 الأدلة والوقائع التفصيلية (للمراجعة والتحقق)", expanded=True):
                 st.markdown(st.session_state["details"])
+    else:
+        st.info("👈 قم بإدخال رقم الطلب والتقييمات، ثم اضغط على زر التحليل لتعرض النتائج هنا.")
