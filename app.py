@@ -93,7 +93,7 @@ if analyze_btn:
             try:
                 genai.configure(api_key=api_key)
                 
-                # استخدام النموذج المحدث والمستقر
+                # تحديث الموديل للنموذج المعتمد المطلوب من جوجل
                 model = genai.GenerativeModel('gemini-2.5-flash')
                 
                 prompt_text = PROMPT_TEMPLATE.format(
