@@ -485,49 +485,53 @@ def fetch_order_data(
 # ============================================================
 # BUILD AUDIT PROMPT
 # ============================================================
-
 def build_audit_prompt(
     order_id: int,
     order_data: dict[str, Any],
     ratings: dict[str, int],
 ) -> str:
 
-    ratings_context = ""
+    # --------------------------------------------------------
+    # Convert ratings to JSON BEFORE building the f-string
+    # --------------------------------------------------------
 
-    if ratings:
+    ratings_json = json.dumps(
+        ratings,
+        ensure_ascii=False,
+        indent=2,
+    )
 
-        ratings_context = (
-            "تقييمات العميل المدخلة للطلب:\n"
-            f"{json.dumps("
-            f"ratings, "
-            f"ensure_ascii=False, "
-            f"indent=2"
-            f")}\n"
-        )
+    # --------------------------------------------------------
+    # Convert all order data to readable JSON
+    # --------------------------------------------------------
 
-    tickets = json.dumps(
+    tickets_json = json.dumps(
         order_data.get("tickets"),
         ensure_ascii=False,
         indent=2,
     )
 
-    comments = json.dumps(
+    comments_json = json.dumps(
         order_data.get("comments"),
         ensure_ascii=False,
         indent=2,
     )
 
-    status_history = json.dumps(
+    status_history_json = json.dumps(
         order_data.get("status_history"),
         ensure_ascii=False,
         indent=2,
     )
 
-    pricing = json.dumps(
+    pricing_json = json.dumps(
         order_data.get("pricing"),
         ensure_ascii=False,
         indent=2,
     )
+
+    # --------------------------------------------------------
+    # Build prompt
+    # --------------------------------------------------------
 
     prompt = f"""
 أنت كبير مدققي العمليات وتجربة العملاء
@@ -543,7 +547,12 @@ def build_audit_prompt(
 (Root Cause)
 خلف تجربة العميل أو التقييم المنخفض.
 
-{ratings_context}
+
+==================================================
+⭐ تقييمات العميل
+==================================================
+
+{ratings_json}
 
 
 ==================================================
@@ -563,7 +572,7 @@ def build_audit_prompt(
 
 البيانات:
 
-{tickets}
+{tickets_json}
 
 
 ==================================================
@@ -585,7 +594,7 @@ def build_audit_prompt(
 
 البيانات:
 
-{comments}
+{comments_json}
 
 
 ==================================================
@@ -604,7 +613,7 @@ def build_audit_prompt(
 
 البيانات:
 
-{status_history}
+{status_history_json}
 
 
 ==================================================
@@ -625,7 +634,7 @@ def build_audit_prompt(
 
 البيانات:
 
-{pricing}
+{pricing_json}
 
 
 ==================================================
@@ -641,9 +650,8 @@ def build_audit_prompt(
 
 ==================================================
 القسم الأول
+التبرير التشغيلي المباشر لمدير العمليات
 ==================================================
-
-التبرير التشغيلي المباشر لمدير العمليات.
 
 اكتب فقرة واحدة فقط.
 
@@ -683,13 +691,13 @@ def build_audit_prompt(
 
 ==================================================
 القسم الثاني
+الأدلة والوقائع التفصيلية
 ==================================================
-
-الأدلة والوقائع التفصيلية.
 
 اشرح الأدلة التي أدت للاستنتاج.
 
-1. Timeline Deltas
+
+1. ⏱️ Timeline Deltas
 
 احسب:
 
@@ -699,7 +707,7 @@ def build_audit_prompt(
 - نقاط التعطيل.
 
 
-2. أدلة التذاكر
+2. 🎫 أدلة التذاكر
 
 اذكر:
 
@@ -712,7 +720,7 @@ def build_audit_prompt(
 واقتبس النصوص المهمة كما هي.
 
 
-3. أدلة الشات
+3. 💬 أدلة الشات
 
 اذكر:
 
@@ -724,7 +732,7 @@ def build_audit_prompt(
 - هوية المرسل.
 
 
-4. تحليل التسعير
+4. 💰 تحليل التسعير
 
 حلل:
 
@@ -752,6 +760,7 @@ def build_audit_prompt(
 """
 
     return prompt
+
 
 
 # ============================================================
