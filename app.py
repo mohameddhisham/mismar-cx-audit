@@ -200,7 +200,7 @@ with st.sidebar:
     
     api_key_input = st.text_input(
         "Gemini API Key",
-        value="AQ.Ab8RN6IHOFVuYqpUHg5k0eR0DH4IcCpcuOcduV4oVZeOGNe1-w",
+        value="AQ.Ab8RN6L4I0YRUhlGT12J8V0u5DlZM6-sC4vzt3XcXhkU3fq0Zw",
         type="password",
         help="أدخل مفتاح الـ API الخاص بـ Gemini"
     )
