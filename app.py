@@ -7,10 +7,6 @@ import streamlit as st
 from groq import Groq
 
 
-# ============================================================
-# PAGE CONFIG
-# ============================================================
-
 st.set_page_config(
     page_title="نظام تدقيق الطلبات والجودة | مسمار MisMar",
     page_icon="🚗",
@@ -18,10 +14,6 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-
-# ============================================================
-# CSS
-# ============================================================
 
 st.markdown(
     """
@@ -227,29 +219,22 @@ st.markdown(
 )
 
 
-# ============================================================
-# METABASE ENDPOINTS
-# ============================================================
-
 METABASE_ENDPOINTS = {
     "tickets": (
         "https://analysis.mismarapp.com/"
         "public/question/"
         "5f313cbe-6bb4-43bc-9b4d-70b8de7d17d4.json"
     ),
-
     "comments": (
         "https://analysis.mismarapp.com/"
         "public/question/"
         "82aba25f-d368-44e3-8392-dce163d78e23.json"
     ),
-
     "status_history": (
         "https://analysis.mismarapp.com/"
         "public/question/"
         "98fe13e6-298a-4775-8244-3015c9c720fe.json"
     ),
-
     "pricing": (
         "https://analysis.mismarapp.com/"
         "public/question/"
@@ -257,348 +242,209 @@ METABASE_ENDPOINTS = {
     ),
 }
 
-
-# ============================================================
-# GROQ MODELS API
-# ============================================================
-
-GROQ_MODELS_URL = (
-    "https://api.groq.com/openai/v1/models"
-)
+GROQ_MODELS_URL = "https://api.groq.com/openai/v1/models"
 
 
-def get_groq_models(
-    api_key: str,
-) -> list[dict[str, Any]]:
-
-    """
-    جلب كل الموديلات التي يستطيع مفتاح Groq الحالي
-    الوصول إليها فعلياً.
-    """
-
+def get_groq_models(api_key: str) -> list[dict[str, Any]]:
+    """جلب كل الموديلات التي يستطيع مفتاح Groq الحالي الوصول إليها فعلياً."""
     api_key = api_key.strip()
-
     if not api_key:
-
-        raise ValueError(
-            "Groq API Key غير موجود."
-        )
+        raise ValueError("Groq API Key غير موجود.")
 
     response = requests.get(
         GROQ_MODELS_URL,
-
         headers={
-            "Authorization":
-                f"Bearer {api_key}",
-
-            "Content-Type":
-                "application/json",
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
         },
-
         timeout=20,
     )
 
     if response.status_code != 200:
-
         raise Exception(
-            "فشل جلب موديلات Groq.\n\n"
-            f"HTTP {response.status_code}\n"
-            f"{response.text}"
+            f"فشل جلب موديلات Groq.\n\nHTTP {response.status_code}\n{response.text}"
         )
 
     data = response.json()
+    models = data.get("data", [])
 
-    models = data.get(
-        "data",
-        [],
-    )
-
-    if not isinstance(
-        models,
-        list,
-    ):
-
-        raise Exception(
-            "Groq returned an unexpected models response."
-        )
+    if not isinstance(models, list):
+        raise Exception("Groq returned an unexpected models response.")
 
     return models
 
 
-# ============================================================
-# GET MODEL IDS
-# ============================================================
-
-def get_model_ids(
-    api_key: str,
-) -> list[str]:
-
-    models = get_groq_models(
-        api_key
-    )
-
+def get_model_ids(api_key: str) -> list[str]:
+    models = get_groq_models(api_key)
     model_ids = []
-
     for model in models:
-
-        model_id = model.get(
-            "id"
-        )
-
+        model_id = model.get("id")
         if model_id:
-
-            model_ids.append(
-                model_id
-            )
-
-    return sorted(
-        set(model_ids)
-    )
+            model_ids.append(model_id)
+    return sorted(set(model_ids))
 
 
-# ============================================================
-# CHOOSE BEST MODEL
-# ============================================================
-
-def choose_best_model(
-    model_ids: list[str],
-) -> str | None:
-
-    """
-    ترتيب تفضيل للموديلات.
-
-    إذا كان أي موديل من القائمة موجوداً،
-    يتم استخدامه.
-
-    وإذا لم يوجد أي منها،
-    يتم استخدام أول موديل متاح.
-    """
-
+def choose_best_model(model_ids: list[str]) -> str | None:
+    """ترتيب تفضيل للموديلات المتاحة."""
     preferred_models = [
-
-        # OpenAI OSS
         "openai/gpt-oss-120b",
-
         "openai/gpt-oss-20b",
-
-        # Qwen
         "qwen/qwen3.6-27b",
-
         "qwen/qwen3.8-27b",
-
-        # Llama
         "llama-3.3-70b-versatile",
-
         "llama-3.1-8b-instant",
-
-        # Groq compound
         "groq/compound",
-
         "groq/compound-mini",
     ]
 
-    available = set(
-        model_ids
-    )
+    available = set(model_ids)
 
     for preferred in preferred_models:
-
         if preferred in available:
-
             return preferred
 
     if model_ids:
-
         return model_ids[0]
 
     return None
 
 
-# ============================================================
-# FETCH ORDER DATA
-# ============================================================
-
-def fetch_order_data(
-    order_id: int,
-) -> dict[str, Any]:
-
+def fetch_order_data(order_id: int) -> dict[str, Any]:
     payload = {}
-
     for key, url in METABASE_ENDPOINTS.items():
-
         try:
-
             response = requests.get(
                 url,
-
-                params={
-                    "order_id": order_id
-                },
-
+                params={"order_id": order_id},
                 timeout=20,
             )
 
             if response.status_code == 200:
-
                 try:
-
-                    payload[key] = (
-                        response.json()
-                    )
-
+                    payload[key] = response.json()
                 except ValueError:
-
-                    payload[key] = (
-                        "Error: Invalid JSON "
-                        "returned by Metabase."
-                    )
-
+                    payload[key] = "Error: Invalid JSON returned by Metabase."
             else:
-
                 payload[key] = (
-                    f"Error HTTP "
-                    f"{response.status_code}: "
-                    f"{response.text[:500]}"
+                    f"Error HTTP {response.status_code}: {response.text[:500]}"
                 )
-
         except requests.Timeout:
-
-            payload[key] = (
-                "Error: Metabase request timed out."
-            )
-
+            payload[key] = "Error: Metabase request timed out."
         except requests.RequestException as exc:
-
-            payload[key] = (
-                f"Connection Error: {str(exc)}"
-            )
-
+            payload[key] = f"Connection Error: {str(exc)}"
         except Exception as exc:
-
-            payload[key] = (
-                f"Unexpected Error: {str(exc)}"
-            )
+            payload[key] = f"Unexpected Error: {str(exc)}"
 
     return payload
 
 
-# ============================================================
-# DATA CLEANING UTILITY
-# ============================================================
-# ============================================================
-# DATA CLEANING UTILITY (AGGRESSIVE)
-# ============================================================
 def clean_and_minify(data: Any, max_items: int = 10, max_chars: int = 1500) -> str:
-    """
-    Cleans the Metabase JSON by removing empty strings, dropping 
-    useless ID/URL columns, limits items, and enforces a strict character limit.
-    """
+    """تخفيض حجم البيانات لعدم تجاوز حد التوكينات في API."""
     if not data:
         return "[]"
-        
+
     if isinstance(data, dict) and "data" in data:
         data = data["data"]
-        
+
     if isinstance(data, list):
-        # 1. Limit to the most recent items
         data = data[-max_items:]
-        
         cleaned_list = []
         for item in data:
             if isinstance(item, dict):
                 cleaned_dict = {}
                 for k, v in item.items():
-                    # 2. Skip empty values
-                    if v in (None, "", [], {}): 
+                    if v in (None, "", [], {}):
                         continue
-                    
-                    # 3. Skip heavy, useless metadata (IDs, URLs, UUIDs)
                     key_lower = str(k).lower()
-                    if "id" in key_lower or "url" in key_lower or "uuid" in key_lower or "token" in key_lower:
+                    if (
+                        "id" in key_lower
+                        or "url" in key_lower
+                        or "uuid" in key_lower
+                        or "token" in key_lower
+                    ):
                         continue
-                        
                     cleaned_dict[k] = v
                 cleaned_list.append(cleaned_dict)
             else:
                 cleaned_list.append(item)
-                
-        # Compress without spaces
-        result_str = json.dumps(cleaned_list, ensure_ascii=False, separators=(',', ':'))
+
+        result_str = json.dumps(
+            cleaned_list, ensure_ascii=False, separators=(",", ":")
+        )
     else:
-        result_str = json.dumps(data, ensure_ascii=False, separators=(',', ':'))
-        
-    # 4. HARD FIREWALL: Truncate string if it exceeds max_chars
-    # This guarantees you NEVER exceed Groq's 8,000 token limit.
+        result_str = json.dumps(
+            data, ensure_ascii=False, separators=(",", ":")
+        )
+
     if len(result_str) > max_chars:
-        result_str = result_str[-max_chars:] # Keep the END (most recent data)
-        
+        result_str = result_str[-max_chars:]
+
     return result_str
 
 
-# ============================================================
-# BUILD AUDIT PROMPT
-# ============================================================
 def build_audit_prompt(
     order_id: int,
     order_data: dict[str, Any],
     ratings: dict[str, int],
 ) -> str:
+    ratings_json = json.dumps(ratings, ensure_ascii=False, separators=(",", ":"))
 
-    ratings_json = json.dumps(ratings, ensure_ascii=False, separators=(',', ':'))
-
-    # Strict limits applied to each category to stay under 8k tokens total
-    tickets_json = clean_and_minify(order_data.get("tickets"), max_items=5, max_chars=1200)
-    comments_json = clean_and_minify(order_data.get("comments"), max_items=15, max_chars=2500)
-    status_history_json = clean_and_minify(order_data.get("status_history"), max_items=10, max_chars=1200)
-    pricing_json = clean_and_minify(order_data.get("pricing"), max_items=5, max_chars=1200)
+    tickets_json = clean_and_minify(
+        order_data.get("tickets"), max_items=5, max_chars=1200
+    )
+    comments_json = clean_and_minify(
+        order_data.get("comments"), max_items=15, max_chars=2500
+    )
+    status_history_json = clean_and_minify(
+        order_data.get("status_history"), max_items=10, max_chars=1200
+    )
+    pricing_json = clean_and_minify(
+        order_data.get("pricing"), max_items=5, max_chars=1200
+    )
 
     prompt = f"""
 أنت كبير مدققي العمليات وتجربة العملاء (Senior Operations & CX Forensic Auditor) في شركة صيانة السيارات (مسمار - MisMar).
-أجرِ فحصاً جنائياً تشغيلياً لبيانات الطلب #{order_id} لاستخراج السبب الجذري المباشر للتقييم المنخفض.
+وظيفتك إجراء فحص ودراسة جنائية تشغيلية متكاملة لبيانات الطلب رقم #{order_id} للوصول للسبب الجذر المباشر خلف التقييم المنخفض.
 
+تقييمات العميل المدخلة للطلب:
 {ratings_json}
 
-البيانات المتاحة للطلب:
-1. 🎫 تذاكر الشكاوى والمتابعة: 
+البيانات المتاحة للطلب من النظام:
+1. 🎫 تذاكر الشكاوى والمتابعة (افحص خانة Description، خانة Result، تواريخ الإنشاء والإغلاق، واسم قسم التذكرة): 
 {tickets_json}
 
-2. 💬 محادثات الشات والتعليقات الداخلية: 
+2. 💬 محادثات الشات والتعليقات الداخلية (افحص نصوص المحادثات بين التشغيل والمركز والعميل، التواقيت، هوية المُرسل، تفاصيل المفاوضات وأجور اليد): 
 {comments_json}
 
-3. ⏱️ التسلسل الزمني للحالات والمدد: 
+3. ⏱️ التسلسل الزمني للحالات والمدد (احسب المدة بين كل حالة وأخرى بالدقيقة والساعة واكتشف محطات التعطيل): 
 {status_history_json}
 
-4. 💰 طلبات التسعير وعروض الأسعار: 
+4. 💰 طلبات التسعير وعروض الأسعار (افحص الفارق الزمني بين طلب التسعير ورفع عرض السعر، تفاصيل قطع الغيار مقابل أجور اليد، العروض المرفوضة والمقبولة): 
 {pricing_json}
 
 === 🎯 تعليمات وقواعد الصياغة الصارمة ===
-قسم إجابتك إلى قسمين يفصل بينهما السطر `===SPLIT===`:
+قم بتقسيم إجابتك إلى قسمين يفصل بينهما السطر `===SPLIT===`:
 
 القسم الأول: [التبرير التشغيلي المباشر لمدير العمليات]
-- اكتب فقرة واحدة فقط (4 إلى 5 سطور كحد أقصى).
-- ممنوع سرد درجات التقييم (مثل: السعر 2/5).
-- لا تستخدم أعذاراً عامة. اذكر السبب الفعلي لرفض العروض.
-- ابدأ بالسبب الجذري مباشرة المستخرج من التذاكر والشات.
-- حدد سبب اعتراض السعر بدقة من النصوص.
-- حدد المتسبب الفعلي في التأخير من الشات والتسلسل الزمني.
-- لا تخترع معلومات.
-- لا تستخدم القوائم، العناوين، أو أرقام التذاكر والعروض الداخلية.
+- فقرة واحدة متصلة ومباشرة فقط (من 4 إلى 5 سطور كحد أقصى).
+- 🛑 يُمنع تماماً البدء بذكر أو سرد درجات التقييمات مثل: (يعود سبب تقييم العميل للسعر بـ 2/5 والوقت بـ 3/5...).
+- 🛑 يُمنع تماماً استخدام جمل فضفاضة مثل "بسبب كثرة عروض الأسعار والارتباك" دون ذكر السبب الحقيقي الذي أدى لرفض العروض.
+- 🟢 ابدأ فوراً وبشكل مباشر بالسبب الحقيقي المستخرج من التذاكر والشات.
+- 🔍 البحث عن السبب الجذر للأسعار: اربط اعتراض السعر بالنص المكتوب داخل التذاكر (مثل: اعتراض العميل على ارتفاع أجور اليد مقارنة بأسعار السوق، إضافة قطع اختيارية بشكل مفاجئ، أو الخلاف على تسعير قطع التشليح).
+- 🔍 البحث عن السبب الجذر للتأخير: ارجع لتعليقات الشات والتسلسل الزمني لتحديد المتسبب الفعلي في التأخير (مثل: تأخر المركز في التشخيص المبدئي، أو تأخر توريد القطع من المورد).
+- يُمنع استخدام القوائم، العناوين، أو أرقام التذاكر والعروض الداخلية (مثل #658323).
 
 ===SPLIT===
 
 القسم الثاني: [الأدلة والوقائع التفصيلية والربط الزمني]
-اشرح الأدلة والحقائق المستخرجة التي أدت للاستنتاج أعلاه:
-1. ⏱️ التحليل الزمني (Timeline Deltas): احسب مدة رفع العرض بعد طلب التسعير، وأطول حالة انتظار، ومحطات التعطيل.
-2. 🎫 أدلة التذاكر: اقتبس نصوص الشكوى (Description) والنتيجة (Result) بدقة.
-3. 💬 أدلة الشات: اذكر رسائل المفاوضات ومحادثات المركز بالنص مع التوقيت وهوية المرسل.
-4. 💰 تحليل التسعير: حدد فروق الأسعار، الخلاف حول أجور اليد مقابل القطع، وسبب رفض العروض.
+- اكتب هنا بتفصيل كامل وبلا حدود للحجم كافة الأدلة والحقائق المستخرجة من البيانات الأربعة التي أدت للصياغة أعلاه:
+  1. ⏱️ التحليل الزمني للدلتا (Timeline Deltas): احسب بدقة كم استغرق رفع عرض السعر بعد طلب التسعير، وكم استغرقت الحالة الأكثر تأخيراً.
+  2. 🎫 أدلة التذاكر: اقتبس نصوص الشكوى (description) ونتيجة التذكرة (result) كلمة بكلمة.
+  3. 💬 أدلة الشات: اذكر رسائل المفاوضات ومحادثات مركز الصيانة بالنص مع التوقيت.
+  4. 💰 تحليل التسعير: حدد فروق الأسعار، اعتراضات أجور اليد مقابل قطع الغيار، وسبب رفض العروض المبدئية.
 """
     return prompt
 
-
-# ============================================================
-# GROQ ANALYSIS
-# ============================================================
 
 def analyze_order_rating(
     api_key: str,
@@ -607,17 +453,7 @@ def analyze_order_rating(
     model_name: str,
 ) -> str:
 
-    # --------------------------------------------------------
-    # Fetch order data
-    # --------------------------------------------------------
-
-    order_data = fetch_order_data(
-        order_id
-    )
-
-    # --------------------------------------------------------
-    # Build prompt
-    # --------------------------------------------------------
+    order_data = fetch_order_data(order_id)
 
     prompt = build_audit_prompt(
         order_id,
@@ -625,521 +461,197 @@ def analyze_order_rating(
         ratings,
     )
 
-    # --------------------------------------------------------
-    # Client
-    # --------------------------------------------------------
-
-    client = Groq(
-        api_key=api_key.strip()
-    )
-
-    # --------------------------------------------------------
-    # Call Groq
-    # --------------------------------------------------------
+    client = Groq(api_key=api_key.strip())
 
     try:
-
-        response = (
-            client
-            .chat
-            .completions
-            .create(
-
-                model=model_name,
-
-                messages=[
-
-                    {
-                        "role": "system",
-
-                        "content": (
-                            "أنت Senior Operations "
-                            "وCX Forensic Auditor. "
-                            "حلل البيانات بدقة. "
-                            "لا تخترع أي معلومات. "
-                            "اعتمد فقط على البيانات "
-                            "المقدمة."
-                        ),
-                    },
-
-                    {
-                        "role": "user",
-
-                        "content": prompt,
-                    },
-                ],
-
-                temperature=0.3,
-
-                top_p=0.9,
-
-                max_tokens=2000,
-            )
+        response = client.chat.completions.create(
+            model=model_name,
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "أنت Senior Operations وCX Forensic Auditor. "
+                        "حلل البيانات بدقة. لا تخترع أي معلومات. "
+                        "اعتمد فقط على البيانات المقدمة."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": prompt,
+                },
+            ],
+            temperature=0.3,
+            top_p=0.9,
+            max_tokens=2000,
         )
-
     except Exception as exc:
-
         raise Exception(
-            "خطأ في الاتصال بالذكاء الاصطناعي "
-            f"عبر Groq ({model_name}):\n"
-            f"{str(exc)}"
+            f"خطأ في الاتصال بالذكاء الاصطناعي عبر Groq ({model_name}):\n{str(exc)}"
         )
 
-    # --------------------------------------------------------
-    # Validate
-    # --------------------------------------------------------
+    if not response or not response.choices:
+        raise Exception("Groq returned no valid choices.")
 
-    if not response:
-
-        raise Exception(
-            "Groq returned an empty response."
-        )
-
-    if not response.choices:
-
-        raise Exception(
-            "Groq returned no choices."
-        )
-
-    content = (
-        response
-        .choices[0]
-        .message
-        .content
-    )
+    content = response.choices[0].message.content
 
     if not content:
-
-        raise Exception(
-            "Groq returned empty content."
-        )
+        raise Exception("Groq returned empty content.")
 
     return content.strip()
 
 
-# ============================================================
-# SIDEBAR
-# ============================================================
-
 with st.sidebar:
-
     st.image(
         "https://mismarapp.com/static/media/logo.f6cf70e4.svg",
         width=200,
     )
 
-    st.markdown(
-        "### ⚙️ إعدادات النظام"
-    )
-
-    # --------------------------------------------------------
-    # API KEY
-    # --------------------------------------------------------
+    st.markdown("### ⚙️ إعدادات النظام")
 
     try:
-
-        secret_key = st.secrets.get(
-            "GROQ_API_KEY",
-            "",
-        )
-
+        secret_key = st.secrets.get("GROQ_API_KEY", "")
     except Exception:
-
         secret_key = ""
 
-    secret_key = str(
-        secret_key
-    ).strip()
+    secret_key = str(secret_key).strip()
 
     api_key_input = st.text_input(
         "Groq API Key",
-
         value=secret_key,
-
         type="password",
-
-        help=(
-            "يمكن تحميل المفتاح من "
-            "Streamlit Secrets."
-        ),
+        help="يمكن تحميل المفتاح من Streamlit Secrets.",
     )
 
     api_key = api_key_input.strip()
 
     if api_key:
-
-        st.success(
-            "🔐 Groq API Key موجود"
-        )
-
+        st.success("🔐 Groq API Key موجود")
     else:
-
-        st.warning(
-            "⚠️ أضف GROQ_API_KEY في Secrets "
-            "أو أدخله يدوياً."
-        )
-
-
-    # ========================================================
-    # MODEL DISCOVERY
-    # ========================================================
+        st.warning("⚠️ أضف GROQ_API_KEY في Secrets أو أدخله يدوياً.")
 
     available_models = []
-
     selected_model = None
 
     if api_key:
-
         try:
-
-            available_models = get_model_ids(
-                api_key
-            )
+            available_models = get_model_ids(api_key)
 
             if available_models:
-
-                recommended_model = (
-                    choose_best_model(
-                        available_models
-                    )
-                )
-
-                # --------------------------------------------
-                # Select model
-                # --------------------------------------------
-
+                recommended_model = choose_best_model(available_models)
                 default_index = 0
 
-                if (
-                    recommended_model
-                    in available_models
-                ):
-
-                    default_index = (
-                        available_models.index(
-                            recommended_model
-                        )
-                    )
+                if recommended_model in available_models:
+                    default_index = available_models.index(recommended_model)
 
                 selected_model = st.selectbox(
                     "🤖 اختر موديل Groq",
-
                     options=available_models,
-
                     index=default_index,
-
-                    help=(
-                        "هذه هي الموديلات التي "
-                        "يراها مفتاح Groq الحالي فعلياً."
-                    ),
+                    help="هذه هي الموديلات التي يراها مفتاح Groq الحالي فعلياً.",
                 )
 
-                st.success(
-                    f"✅ تم العثور على "
-                    f"{len(available_models)} موديل"
-                )
-
-                st.caption(
-                    "الموديل المختار:"
-                )
-
-                st.code(
-                    selected_model,
-                    language="text",
-                )
-
+                st.success(f"✅ تم العثور على {len(available_models)} موديل")
+                st.caption("الموديل المختار:")
+                st.code(selected_model, language="text")
             else:
-
-                st.error(
-                    "لم يتم العثور على أي موديلات."
-                )
+                st.error("لم يتم العثور على أي موديلات.")
 
         except Exception as exc:
-
-            st.error(
-                "❌ فشل اكتشاف موديلات Groq"
-            )
-
-            st.code(
-                str(exc),
-                language="text",
-            )
-
-
-    # ========================================================
-    # SHOW ALL MODELS
-    # ========================================================
+            st.error("❌ فشل اكتشاف موديلات Groq")
+            st.code(str(exc), language="text")
 
     if available_models:
-
-        with st.expander(
-            f"📚 كل الموديلات المتاحة "
-            f"({len(available_models)})"
-        ):
-
-            for index, model in enumerate(
-                available_models,
-                start=1,
-            ):
-
-                st.write(
-                    f"{index}. `{model}`"
-                )
+        with st.expander(f"📚 كل الموديلات المتاحة ({len(available_models)})"):
+            for index, model in enumerate(available_models, start=1):
+                st.write(f"{index}. `{model}`")
 
 
-# ============================================================
-# MAIN COLUMNS
-# ============================================================
-
-col1, col2 = st.columns(
-    [1, 1],
-    gap="large",
-)
-
-
-# ============================================================
-# INPUTS
-# ============================================================
+col1, col2 = st.columns([1, 1], gap="large")
 
 with col1:
-
-    st.subheader(
-        "📋 بيانات الطلب والتقييمات"
-    )
+    st.subheader("📋 بيانات الطلب والتقييمات")
 
     order_id = st.number_input(
         "رقم الطلب (Order ID)",
-
         min_value=1,
-
         value=1034406,
-
         step=1,
     )
 
-    st.markdown(
-        "##### ⭐️ تقييمات العميل المدخلة:"
-    )
+    st.markdown("##### ⭐️ تقييمات العميل المدخلة:")
 
     col_r1, col_r2 = st.columns(2)
 
     with col_r1:
-
-        time_rating = st.slider(
-            "الوقت ⏱️",
-            1,
-            5,
-            5,
-        )
-
-        price_rating = st.slider(
-            "السعر 💰",
-            1,
-            5,
-            3,
-        )
-
-        quality_rating = st.slider(
-            "الجودة 🛠️",
-            1,
-            5,
-            5,
-        )
+        time_rating = st.slider("الوقت ⏱️", 1, 5, 5)
+        price_rating = st.slider("السعر 💰", 1, 5, 3)
+        quality_rating = st.slider("الجودة 🛠️", 1, 5, 5)
 
     with col_r2:
-
-        cs_rating = st.slider(
-            "خدمة العملاء 🎧",
-            1,
-            5,
-            5,
-        )
-
-        overall_rating = st.slider(
-            "التقييم العام ⭐️",
-            1,
-            5,
-            5,
-        )
+        cs_rating = st.slider("خدمة العملاء 🎧", 1, 5, 5)
+        overall_rating = st.slider("التقييم العام ⭐️", 1, 5, 5)
 
     sample_ratings = {
-
-        "الوقت":
-            time_rating,
-
-        "السعر":
-            price_rating,
-
-        "الجودة":
-            quality_rating,
-
-        "خدمة العملاء":
-            cs_rating,
-
-        "التقييم العام":
-            overall_rating,
+        "الوقت": time_rating,
+        "السعر": price_rating,
+        "الجودة": quality_rating,
+        "خدمة العملاء": cs_rating,
+        "التقييم العام": overall_rating,
     }
 
-    st.markdown(
-        "<br>",
-        unsafe_allow_html=True,
-    )
+    st.markdown("<br>", unsafe_allow_html=True)
+    analyze_btn = st.button("🚀 بدء التدقيق العميق واستخراج التبرير")
 
-    analyze_btn = st.button(
-        "🚀 بدء التدقيق العميق واستخراج التبرير"
-    )
-
-
-# ============================================================
-# OUTPUT
-# ============================================================
 
 with col2:
-
-    st.subheader(
-        "📊 مخرجات التقرير والتدقيق"
-    )
+    st.subheader("📊 مخرجات التقرير والتدقيق")
 
     if analyze_btn:
-
         if not api_key:
-
-            st.error(
-                "⚠️ يرجى إدخال Groq API Key."
-            )
-
+            st.error("⚠️ يرجى إدخال Groq API Key.")
         elif not selected_model:
-
-            st.error(
-                "⚠️ لم يتم العثور على موديل "
-                "متاح في Groq."
-            )
-
+            st.error("⚠️ لم يتم العثور على موديل متاح في Groq.")
         else:
-
             with st.spinner(
-                "⏳ جاري الفحص الجنائي الرقمي "
-                "لبيانات الطلب والتذاكر "
-                "والمحادثات..."
+                "⏳ جاري الفحص الجنائي الرقمي لبيانات الطلب والتذاكر والمحادثات..."
             ):
-
                 try:
-
-                    full_response = (
-                        analyze_order_rating(
-
-                            api_key=api_key,
-
-                            order_id=int(
-                                order_id
-                            ),
-
-                            ratings=sample_ratings,
-
-                            model_name=selected_model,
-                        )
+                    full_response = analyze_order_rating(
+                        api_key=api_key,
+                        order_id=int(order_id),
+                        ratings=sample_ratings,
+                        model_name=selected_model,
                     )
 
-                    # ------------------------------------------------
-                    # Split
-                    # ------------------------------------------------
-
-                    if (
-                        "===SPLIT==="
-                        in full_response
-                    ):
-
-                        justification, evidence = (
-                            full_response.split(
-                                "===SPLIT===",
-                                1,
-                            )
+                    if "===SPLIT===" in full_response:
+                        justification, evidence = full_response.split(
+                            "===SPLIT===", 1
                         )
-
                     else:
+                        justification = full_response
+                        evidence = "لم يتم تفكيك الأدلة بشكل منفصل."
 
-                        justification = (
-                            full_response
-                        )
-
-                        evidence = (
-                            "لم يتم تفكيك الأدلة "
-                            "بشكل منفصل."
-                        )
-
-                    # ------------------------------------------------
-                    # Save
-                    # ------------------------------------------------
-
-                    st.session_state[
-                        "audit_result"
-                    ] = {
-
-                        "justification":
-                            justification.strip(),
-
-                        "evidence":
-                            evidence.strip(),
-
-                        "order_id":
-                            int(order_id),
-
-                        "model":
-                            selected_model,
+                    st.session_state["audit_result"] = {
+                        "justification": justification.strip(),
+                        "evidence": evidence.strip(),
+                        "order_id": int(order_id),
+                        "model": selected_model,
                     }
 
-                    st.success(
-                        "✅ اكتمل التدقيق بنجاح."
-                    )
+                    st.success("✅ اكتمل التدقيق بنجاح.")
 
                 except Exception as exc:
+                    st.error("❌ حدث خطأ أثناء التحليل:")
+                    st.code(str(exc), language="text")
 
-                    st.error(
-                        "❌ حدث خطأ أثناء التحليل:"
-                    )
+if "audit_result" in st.session_state and st.session_state["audit_result"]:
+    result = st.session_state["audit_result"]
+    justification = result["justification"]
+    evidence = result["evidence"]
 
-                    st.code(
-                        str(exc),
-                        language="text",
-                    )
+    st.markdown("### 📝 التبرير التشغيلي (جاهز للنسخ لمدير العمليات):")
 
-
-# ============================================================
-# DISPLAY RESULT
-# ============================================================
-
-if (
-    "audit_result"
-    in st.session_state
-    and st.session_state[
-        "audit_result"
-    ]
-):
-
-    result = st.session_state[
-        "audit_result"
-    ]
-
-    justification = result[
-        "justification"
-    ]
-
-    evidence = result[
-        "evidence"
-    ]
-
-    # --------------------------------------------------------
-    # Justification
-    # --------------------------------------------------------
-
-    st.markdown(
-        "### 📝 التبرير التشغيلي "
-        "(جاهز للنسخ لمدير العمليات):"
-    )
-
-    safe_justification = html.escape(
-        justification
-    )
+    safe_justification = html.escape(justification)
 
     st.markdown(
         f"""
@@ -1147,30 +659,18 @@ if (
             {safe_justification}
         </div>
         """,
-
         unsafe_allow_html=True,
     )
 
     st.text_area(
         "📋 اضغط Ctrl+A ثم Ctrl+C للنسخ المباشر:",
-
         value=justification,
-
         height=150,
     )
 
-    # --------------------------------------------------------
-    # Evidence
-    # --------------------------------------------------------
+    st.markdown("### 🔍 الأدلة والوقائع التفصيلية ومحطات الربط الزمني:")
 
-    st.markdown(
-        "### 🔍 الأدلة والوقائع التفصيلية "
-        "ومحطات الربط الزمني:"
-    )
-
-    safe_evidence = html.escape(
-        evidence
-    )
+    safe_evidence = html.escape(evidence)
 
     st.markdown(
         f"""
@@ -1178,24 +678,13 @@ if (
             {safe_evidence}
         </div>
         """,
-
         unsafe_allow_html=True,
     )
 
-    # --------------------------------------------------------
-    # Metadata
-    # --------------------------------------------------------
-
     st.caption(
-        f"Order ID: {result['order_id']} "
-        f"| Model: {result['model']}"
+        f"Order ID: {result['order_id']} | Model: {result['model']}"
     )
 
 else:
-
     if not analyze_btn:
-
-        st.info(
-            "👈 قم بإدخال رقم الطلب والضغط "
-            "على زر التحليل لعرض النتائج هنا."
-        )
+        st.info("👈 قم بإدخال رقم الطلب والضغط على زر التحليل لعرض النتائج هنا.")
