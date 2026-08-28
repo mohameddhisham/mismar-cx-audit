@@ -197,13 +197,21 @@ def analyze_order_rating(api_key: str, order_id: int, ratings: dict) -> str:
 with st.sidebar:
     st.image("https://mismarapp.com/static/media/logo.f6cf70e4.svg", width=200)
     st.markdown("### ⚙️ إعدادات النظام")
-    
+
+    # المفتاح دلوقتي بيتقرا من Streamlit Secrets فقط، ومش مكتوب صريح في الكود.
+    # ده مهم جداً: أي مفتاح يتكتب صريح في كود مرفوع على GitHub بيتكشف تلقائياً
+    # عن طريق GitHub Secret Scanning وجوجل بتلغيه فوراً كإجراء حماية.
+    secret_key = st.secrets.get("GEMINI_API_KEY", "")
+
     api_key_input = st.text_input(
         "Gemini API Key",
-        value="AQ.Ab8RN6L4I0YRUhlGT12J8V0u5DlZM6-sC4vzt3XcXhkU3fq0Zw",
+        value=secret_key,
         type="password",
-        help="أدخل مفتاح الـ API الخاص بـ Gemini"
+        help="بيتم تحميله تلقائياً من Secrets. تقدر تكتب مفتاح مختلف هنا مؤقتاً لو حابب."
     )
+
+    if not secret_key and not api_key_input:
+        st.warning("⚠️ لم يتم العثور على GEMINI_API_KEY في Secrets. أضفه من إعدادات التطبيق على Streamlit Cloud (Settings → Secrets)، أو أدخل المفتاح يدوياً هنا مؤقتاً.")
 
 st.markdown("""
 <div class="mismar-header">
