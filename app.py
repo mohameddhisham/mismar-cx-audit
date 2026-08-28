@@ -1,12 +1,10 @@
 import json
 import html
-import os
 from typing import Any
 
 import requests
 import streamlit as st
-from google import genai
-from google.genai import types
+from groq import Groq
 
 
 # ============================================================
@@ -94,14 +92,8 @@ st.markdown(
         color: #D1D5DB;
         line-height: 1.8;
         white-space: pre-wrap;
-    }
-
-    .status-card {
-        background: #111827;
-        border: 1px solid #374151;
-        padding: 16px;
-        border-radius: 12px;
-        margin-bottom: 15px;
+        direction: rtl;
+        text-align: right;
     }
 
     .stButton > button {
@@ -146,16 +138,19 @@ METABASE_ENDPOINTS = {
         "public/question/"
         "5f313cbe-6bb4-43bc-9b4d-70b8de7d17d4.json"
     ),
+
     "comments": (
         "https://analysis.mismarapp.com/"
         "public/question/"
         "82aba25f-d368-44e3-8392-dce163d78e23.json"
     ),
+
     "status_history": (
         "https://analysis.mismarapp.com/"
         "public/question/"
         "98fe13e6-298a-4775-8244-3015c9c720fe.json"
     ),
+
     "pricing": (
         "https://analysis.mismarapp.com/"
         "public/question/"
@@ -170,7 +165,7 @@ METABASE_ENDPOINTS = {
 
 def fetch_order_data(order_id: int) -> dict[str, Any]:
     """
-    جلب بيانات الطلب الكاملة من مصادر Metabase الأربعة.
+    جلب بيانات الطلب من مصادر Metabase الأربعة.
     """
 
     payload = {}
@@ -178,6 +173,7 @@ def fetch_order_data(order_id: int) -> dict[str, Any]:
     for key, url in METABASE_ENDPOINTS.items():
 
         try:
+
             response = requests.get(
                 url,
                 params={"order_id": order_id},
@@ -185,31 +181,46 @@ def fetch_order_data(order_id: int) -> dict[str, Any]:
             )
 
             if response.status_code == 200:
+
                 try:
                     payload[key] = response.json()
+
                 except ValueError:
+
                     payload[key] = (
-                        f"Error: Response from Metabase "
-                        f"was not valid JSON."
+                        "Error: Metabase returned invalid JSON."
                     )
 
             else:
+
                 payload[key] = (
                     f"Error HTTP {response.status_code}: "
                     f"{response.text[:500]}"
                 )
 
+        except requests.Timeout:
+
+            payload[key] = (
+                "Error: Request timed out while connecting to Metabase."
+            )
+
         except requests.RequestException as exc:
-            payload[key] = f"Connection Error: {str(exc)}"
+
+            payload[key] = (
+                f"Connection Error: {str(exc)}"
+            )
 
         except Exception as exc:
-            payload[key] = f"Unexpected Error: {str(exc)}"
+
+            payload[key] = (
+                f"Unexpected Error: {str(exc)}"
+            )
 
     return payload
 
 
 # ============================================================
-# BUILD PROMPT
+# BUILD AUDIT PROMPT
 # ============================================================
 
 def build_audit_prompt(
@@ -221,6 +232,7 @@ def build_audit_prompt(
     ratings_context = ""
 
     if ratings:
+
         ratings_context = (
             "تقييمات العميل المدخلة للطلب:\n"
             f"{json.dumps(ratings, ensure_ascii=False, indent=2)}\n"
@@ -250,14 +262,14 @@ def build_audit_prompt(
         indent=2,
     )
 
-    return f"""
+    prompt = f"""
 أنت كبير مدققي العمليات وتجربة العملاء
 (Senior Operations & CX Forensic Auditor)
 في شركة صيانة السيارات (مسمار - MisMar).
 
 وظيفتك إجراء فحص ودراسة جنائية تشغيلية متكاملة
-لبيانات الطلب رقم #{order_id} للوصول للسبب الجذر المباشر
-خلف التقييم المنخفض.
+لبيانات الطلب رقم #{order_id}
+للوصول للسبب الجذر المباشر خلف التقييم المنخفض.
 
 {ratings_context}
 
@@ -282,6 +294,8 @@ def build_audit_prompt(
 {tickets}
 
 
+==================================================
+
 2. 💬 محادثات الشات والتعليقات الداخلية
 
 افحص:
@@ -302,6 +316,8 @@ def build_audit_prompt(
 {comments}
 
 
+==================================================
+
 3. ⏱️ التسلسل الزمني للحالات والمدد
 
 افحص:
@@ -317,6 +333,8 @@ def build_audit_prompt(
 
 {status_history}
 
+
+==================================================
 
 4. 💰 طلبات التسعير وعروض الأسعار
 
@@ -338,10 +356,10 @@ def build_audit_prompt(
 
 
 ==================================================
-🎯 قواعد التحليل الصارمة
+🎯 تعليمات وقواعد الصياغة الصارمة
 ==================================================
 
-قم بتقسيم الإجابة إلى قسمين يفصل بينهما السطر:
+قم بتقسيم إجابتك إلى قسمين يفصل بينهما السطر:
 
 ===SPLIT===
 
@@ -353,7 +371,7 @@ def build_audit_prompt(
 
 - فقرة واحدة متصلة ومباشرة فقط.
 - من 4 إلى 5 سطور كحد أقصى.
-- لا تبدأ بذكر درجات التقييم.
+- يُمنع تماماً البدء بذكر درجات التقييم.
 - لا تقل:
   "العميل أعطى السعر 2/5 والوقت 3/5..."
 - ابدأ مباشرة بالسبب الجذري الحقيقي.
@@ -367,8 +385,8 @@ def build_audit_prompt(
 - حدد السبب الحقيقي وراء التأخير.
 - حدد المتسبب في التأخير إذا كان ذلك مثبتاً بالأدلة.
 - لا تخترع معلومات.
-- لا تستخدم قوائم.
-- لا تستخدم عناوين داخل هذه الفقرة.
+- لا تستخدم قوائم في القسم الأول.
+- لا تستخدم عناوين داخل القسم الأول.
 - لا تستخدم أرقام التذاكر أو أرقام العروض الداخلية.
 
 
@@ -439,11 +457,40 @@ def build_audit_prompt(
 - لا تغيّر النصوص المقتبسة من التذاكر أو المحادثات.
 - لا تذكر درجات التقييم في بداية التبرير التشغيلي.
 - ركز على Root Cause وليس مجرد وصف المشكلة.
+- جميع الاستنتاجات يجب أن تكون مبنية على البيانات المقدمة.
 """
+
+    return prompt
 
 
 # ============================================================
-# GEMINI ANALYSIS - NEW GOOGLE GENAI SDK
+# GROQ CLIENT
+# ============================================================
+
+def create_groq_client(api_key: str) -> Groq:
+
+    api_key = api_key.strip()
+
+    if not api_key:
+        raise ValueError(
+            "Groq API Key غير موجود."
+        )
+
+    try:
+
+        return Groq(
+            api_key=api_key
+        )
+
+    except Exception as exc:
+
+        raise Exception(
+            f"فشل إنشاء Groq client: {str(exc)}"
+        )
+
+
+# ============================================================
+# GROQ ANALYSIS
 # ============================================================
 
 def analyze_order_rating(
@@ -452,19 +499,16 @@ def analyze_order_rating(
     ratings: dict[str, int],
 ) -> str:
 
-    api_key = api_key.strip()
-
-    if not api_key:
-        raise ValueError("Gemini API Key غير موجود.")
-
     # --------------------------------------------------------
-    # Fetch data
+    # Fetch order data
     # --------------------------------------------------------
 
-    order_data = fetch_order_data(order_id)
+    order_data = fetch_order_data(
+        order_id
+    )
 
     # --------------------------------------------------------
-    # Build prompt
+    # Build forensic audit prompt
     # --------------------------------------------------------
 
     prompt = build_audit_prompt(
@@ -474,59 +518,60 @@ def analyze_order_rating(
     )
 
     # --------------------------------------------------------
-    # Modern Google GenAI SDK
-    #
-    # Supports GEMINI_API_KEY / explicit API key.
+    # Create Groq client
+    # --------------------------------------------------------
+
+    client = create_groq_client(
+        api_key
+    )
+
+    # --------------------------------------------------------
+    # Groq model
+    # --------------------------------------------------------
+
+    model_name = "llama-3.3-70b-versatile"
+
+    # --------------------------------------------------------
+    # Call Groq
     # --------------------------------------------------------
 
     try:
-        client = genai.Client(
-            api_key=api_key
-        )
 
-    except Exception as exc:
-        raise Exception(
-            f"فشل إنشاء Gemini client: {str(exc)}"
-        )
-
-    # --------------------------------------------------------
-    # Current stable model
-    # --------------------------------------------------------
-
-    model_name = "gemini-2.5-flash"
-
-    try:
-
-        response = client.models.generate_content(
+        response = client.chat.completions.create(
             model=model_name,
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                temperature=0.3,
-                top_p=0.9,
-            ),
+
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "أنت Senior Operations & CX Forensic Auditor. "
+                        "حلل البيانات بدقة شديدة. "
+                        "اعتمد فقط على البيانات المقدمة. "
+                        "لا تخترع أي معلومات. "
+                        "احسب الفروقات الزمنية عندما تكون البيانات "
+                        "الزمنية متاحة."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": prompt,
+                },
+            ],
+
+            temperature=0.3,
+
+            top_p=0.9,
+
+            max_tokens=12000,
         )
 
     except Exception as exc:
 
         error_text = str(exc)
 
-        # Make AQ authentication problem explicit
-        if (
-            "ACCESS_TOKEN_TYPE_UNSUPPORTED" in error_text
-            or "UNAUTHENTICATED" in error_text
-            or "401" in error_text
-        ):
-            raise Exception(
-                "Gemini رفض بيانات المصادقة الخاصة بالمفتاح AQ.\n\n"
-                "الـ AQ key تم تحميله بنجاح من التطبيق، "
-                "لكن Gemini API رفضه أثناء المصادقة.\n\n"
-                "هذا يشير إلى مشكلة في Authorization Key / "
-                "Google project provisioning وليس في الـ prompt."
-                f"\n\nتفاصيل Google:\n{error_text}"
-            )
-
         raise Exception(
-            f"خطأ أثناء الاتصال بـ Gemini ({model_name}): "
+            f"خطأ في الاتصال بالذكاء الاصطناعي "
+            f"عبر Groq ({model_name}):\n"
             f"{error_text}"
         )
 
@@ -534,63 +579,103 @@ def analyze_order_rating(
     # Validate response
     # --------------------------------------------------------
 
-    if response is None:
+    if not response:
+
         raise Exception(
-            "Gemini لم يرجع response."
+            "Groq لم يرجع أي response."
         )
 
-    text = getattr(response, "text", None)
+    if not response.choices:
 
-    if not text:
         raise Exception(
-            "Gemini رجع response بدون نص."
+            "Groq لم يرجع أي choices."
         )
 
-    return text.strip()
+    message = response.choices[0].message
+
+    if not message:
+
+        raise Exception(
+            "Groq لم يرجع message."
+        )
+
+    result = message.content
+
+    if not result:
+
+        raise Exception(
+            "Groq رجع نتيجة فارغة."
+        )
+
+    return result.strip()
 
 
 # ============================================================
-# GEMINI CONNECTION TEST
+# TEST GROQ CONNECTION
 # ============================================================
 
-def test_gemini_connection(api_key: str) -> tuple[bool, str]:
+def test_groq_connection(
+    api_key: str,
+) -> tuple[bool, str]:
 
     api_key = api_key.strip()
 
     if not api_key:
-        return False, "API Key غير موجود."
+
+        return (
+            False,
+            "Groq API Key غير موجود."
+        )
 
     try:
 
-        client = genai.Client(
-            api_key=api_key
+        client = create_groq_client(
+            api_key
         )
 
-        response = client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents="Reply with exactly: GEMINI_OK",
-            config=types.GenerateContentConfig(
-                temperature=0,
-                max_output_tokens=10,
-            ),
+        response = client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+
+            messages=[
+                {
+                    "role": "user",
+                    "content": (
+                        "Reply with exactly: GROQ_OK"
+                    ),
+                }
+            ],
+
+            temperature=0,
+
+            max_tokens=10,
         )
 
-        text = getattr(response, "text", "") or ""
+        if not response.choices:
 
-        return True, text.strip()
+            return (
+                False,
+                "Groq لم يرجع أي نتيجة."
+            )
+
+        text = (
+            response
+            .choices[0]
+            .message
+            .content
+            or ""
+        )
+
+        return (
+            True,
+            text.strip()
+        )
 
     except Exception as exc:
 
-        error_text = str(exc)
-
-        if "ACCESS_TOKEN_TYPE_UNSUPPORTED" in error_text:
-            return (
-                False,
-                "AQ authentication rejected by Gemini API.\n\n"
-                f"{error_text}"
-            )
-
-        return False, error_text
+        return (
+            False,
+            str(exc)
+        )
 
 
 # ============================================================
@@ -604,32 +689,43 @@ with st.sidebar:
         width=200,
     )
 
-    st.markdown("### ⚙️ إعدادات النظام")
+    st.markdown(
+        "### ⚙️ إعدادات النظام"
+    )
 
     # --------------------------------------------------------
-    # Streamlit Secret
+    # Load Groq API key from Streamlit Secrets
     # --------------------------------------------------------
 
     try:
+
         secret_key = st.secrets.get(
-            "GEMINI_API_KEY",
-            "",
+            "GROQ_API_KEY",
+            ""
         )
+
     except Exception:
+
         secret_key = ""
 
-    secret_key = str(secret_key).strip()
+    secret_key = str(
+        secret_key
+    ).strip()
 
     # --------------------------------------------------------
-    # Manual override
+    # API Key Input
     # --------------------------------------------------------
 
     api_key_input = st.text_input(
-        "Gemini API Key",
+        "Groq API Key",
+
         value=secret_key,
+
         type="password",
+
         help=(
-            "يتم تحميل المفتاح تلقائياً من Streamlit Secrets. "
+            "يتم تحميل المفتاح تلقائياً من "
+            "Streamlit Secrets. "
             "يمكنك إدخال مفتاح مختلف مؤقتاً."
         ),
     )
@@ -642,59 +738,52 @@ with st.sidebar:
 
     if api_key:
 
-        if api_key.startswith("AQ."):
-            st.success(
-                "🔐 تم اكتشاف Gemini Authorization Key (AQ.)"
-            )
-
-        elif api_key.startswith("AIza"):
-            st.info(
-                "🔑 تم اكتشاف Gemini Standard API Key"
-            )
-
-        else:
-            st.warning(
-                "⚠️ صيغة المفتاح غير معروفة. "
-                "سيتم تجربته كما هو."
-            )
+        st.success(
+            "🔐 تم تحميل Groq API Key"
+        )
 
     else:
 
         st.warning(
-            "⚠️ لم يتم العثور على GEMINI_API_KEY.\n\n"
+            "⚠️ لم يتم العثور على GROQ_API_KEY.\n\n"
             "أضفه في Streamlit Cloud:\n"
             "Settings → Secrets"
         )
 
     # --------------------------------------------------------
-    # Test Gemini
+    # Test Groq
     # --------------------------------------------------------
 
-    if st.button("🔌 اختبار اتصال Gemini"):
+    if st.button(
+        "🔌 اختبار اتصال Groq"
+    ):
 
         if not api_key:
 
             st.error(
-                "يرجى إدخال Gemini API Key أولاً."
+                "يرجى إدخال Groq API Key أولاً."
             )
 
         else:
 
             with st.spinner(
-                "⏳ جاري اختبار Gemini..."
+                "⏳ جاري اختبار Groq..."
             ):
 
-                success, message = test_gemini_connection(
-                    api_key
+                success, message = (
+                    test_groq_connection(
+                        api_key
+                    )
                 )
 
             if success:
 
                 st.success(
-                    "✅ Gemini API يعمل بشكل صحيح."
+                    "✅ Groq API يعمل بشكل صحيح."
                 )
 
                 if message:
+
                     st.caption(
                         f"Response: {message}"
                     )
@@ -702,7 +791,7 @@ with st.sidebar:
             else:
 
                 st.error(
-                    "❌ فشل اتصال Gemini"
+                    "❌ فشل اتصال Groq"
                 )
 
                 st.code(
@@ -736,7 +825,7 @@ st.markdown(
 
 
 # ============================================================
-# MAIN LAYOUT
+# MAIN COLUMNS
 # ============================================================
 
 col1, col2 = st.columns(
@@ -757,8 +846,11 @@ with col1:
 
     order_id = st.number_input(
         "رقم الطلب (Order ID)",
+
         min_value=1,
+
         value=1034406,
+
         step=1,
     )
 
@@ -835,12 +927,16 @@ with col2:
         "📊 مخرجات التقرير والتدقيق"
     )
 
+    # --------------------------------------------------------
+    # Start analysis
+    # --------------------------------------------------------
+
     if analyze_btn:
 
         if not api_key:
 
             st.error(
-                "⚠️ يرجى إدخال Gemini API Key "
+                "⚠️ يرجى إدخال Groq API Key "
                 "من القائمة الجانبية."
             )
 
@@ -853,14 +949,16 @@ with col2:
 
                 try:
 
-                    full_response = analyze_order_rating(
-                        api_key=api_key,
-                        order_id=int(order_id),
-                        ratings=sample_ratings,
+                    full_response = (
+                        analyze_order_rating(
+                            api_key=api_key,
+                            order_id=int(order_id),
+                            ratings=sample_ratings,
+                        )
                     )
 
                     # ------------------------------------------------
-                    # Split response
+                    # Split AI response
                     # ------------------------------------------------
 
                     if "===SPLIT===" in full_response:
@@ -880,19 +978,26 @@ with col2:
                             "لم يتم تفكيك الأدلة بشكل منفصل."
                         )
 
+                    # ------------------------------------------------
+                    # Clean result
+                    # ------------------------------------------------
+
                     clean_justification = (
                         justification.strip()
                     )
 
-                    clean_evidence = evidence.strip()
+                    clean_evidence = (
+                        evidence.strip()
+                    )
 
                     # ------------------------------------------------
-                    # Save result
+                    # Save result in session state
                     # ------------------------------------------------
 
                     st.session_state[
                         "audit_result"
                     ] = {
+
                         "justification":
                             clean_justification,
 
@@ -901,6 +1006,7 @@ with col2:
 
                         "order_id":
                             int(order_id),
+
                     }
 
                     st.success(
@@ -915,12 +1021,14 @@ with col2:
 
 
     # ========================================================
-    # DISPLAY SAVED RESULT
+    # DISPLAY RESULT
     # ========================================================
 
     if (
         "audit_result" in st.session_state
-        and st.session_state["audit_result"]
+        and st.session_state[
+            "audit_result"
+        ]
     ):
 
         result = st.session_state[
@@ -959,7 +1067,9 @@ with col2:
 
         st.text_area(
             "📋 اضغط Ctrl+A ثم Ctrl+C للنسخ المباشر:",
+
             value=justification,
+
             height=150,
         )
 
@@ -986,7 +1096,7 @@ with col2:
         )
 
         # ----------------------------------------------------
-        # Order info
+        # Order ID
         # ----------------------------------------------------
 
         st.caption(
