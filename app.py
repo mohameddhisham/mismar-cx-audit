@@ -840,7 +840,7 @@ def analyze_order_rating(
 
                 top_p=0.9,
 
-                max_tokens=12000,
+                max_tokens=8192,
             )
         )
 
