@@ -230,64 +230,74 @@ if analyze_btn:
                 # 3. إعداد العميل واستخدام آلية الكشف والمرونة المتعددة للنماذج (المرشحين)
                 client = genai.Client(api_key=api_key)
 
-                # حصر القائمة على إصدارات جيل 2.5 النظيفة واستبعاد الجيل القديم 1.5 تماماً
+                # قائمة مرشحين مرتبة من الأحدث للأقدم. جوجل بتلغي أسماء الموديلات بسرعة،
+                # فالكود بيكتشف تلقائياً أي موديل شغال فعلاً على حسابك بدل التقيد باسم واحد ثابت.
                 candidate_models = [
+                    "gemini-3.6-flash",
+                    "gemini-3.5-flash-lite",
+                    "gemini-3-pro",
                     "gemini-2.5-flash",
                     "gemini-2.5-flash-lite",
                     "gemini-2.5-pro",
                 ]
 
                 def get_working_model():
+                    """يكتشف أول موديل متاح فعلياً على حساب المستخدم بدل الاعتماد
+                    على أسماء ثابتة قد تتوقف فجأة."""
                     try:
                         available = {m.name.split("/")[-1] for m in client.models.list()}
                     except Exception:
                         available = None
 
                     if available:
+                        # 1) جرب المرشحين المعروفين بالترتيب
                         for name in candidate_models:
                             if name in available:
                                 return name
-                        for name in sorted(available):
-                            if "2.5" in name and "flash" in name:
-                                return name
-                        for name in sorted(available):
-                            if "flash" in name:
-                                return name
+                        # 2) لو مفيش أي مرشح موجود، هات أفضل موديل flash متاح (مش lite)
+                        flash_models = sorted(
+                            [n for n in available if "flash" in n and "lite" not in n],
+                            reverse=True
+                        )
+                        if flash_models:
+                            return flash_models[0]
+                        # 3) وإلا هات أي موديل flash حتى لو lite
+                        flash_any = sorted([n for n in available if "flash" in n], reverse=True)
+                        if flash_any:
+                            return flash_any[0]
+                        # 4) آخر حل: أي موديل pro متاح
+                        pro_models = sorted([n for n in available if "pro" in n], reverse=True)
+                        if pro_models:
+                            return pro_models[0]
 
+                    # لو فشل استدعاء list نفسه، ارجع لأول مرشح في القائمة
                     return candidate_models[0]
 
                 model_name = get_working_model()
                 response = None
+                last_error = None
 
-                try:
-                    response = client.models.generate_content(
-                        model=model_name,
-                        contents=prompt_text,
-                        config=types.GenerateContentConfig(
-                            temperature=0.3,
-                            top_p=0.9
-                        )
-                    )
-                except Exception as first_err:
-                    last_error = first_err
-                    for name in candidate_models:
-                        if name == model_name:
-                            continue
-                        try:
-                            response = client.models.generate_content(
-                                model=name,
-                                contents=prompt_text,
-                                config=types.GenerateContentConfig(
-                                    temperature=0.3,
-                                    top_p=0.9
-                                )
+                # جرب الموديل المكتشف، ولو فشل جرب باقي المرشحين واحد واحد
+                ordered_attempts = [model_name] + [m for m in candidate_models if m != model_name]
+
+                for name in ordered_attempts:
+                    try:
+                        response = client.models.generate_content(
+                            model=name,
+                            contents=prompt_text,
+                            config=types.GenerateContentConfig(
+                                temperature=0.3,
+                                top_p=0.9
                             )
-                            break
-                        except Exception as e2:
-                            last_error = e2
-                            continue
-                    if response is None:
-                        raise last_error if last_error else Exception("لا يوجد موديل متاح حالياً")
+                        )
+                        model_name = name
+                        break
+                    except Exception as e:
+                        last_error = e
+                        continue
+
+                if response is None:
+                    raise last_error if last_error else Exception("لا يوجد موديل متاح حالياً")
 
                 ai_text = response.text
 
@@ -304,7 +314,7 @@ if analyze_btn:
                     "evidence": details,
                     "order_id": order_id
                 }
-                st.success("✅ تم الفحص والتحليل بنجاح!")
+                st.success(f"✅ تم الفحص والتحليل بنجاح! (الموديل المستخدم: {model_name})")
 
             except Exception as e:
                 st.error(f"❌ حدث خطأ أثناء الاتصال بالذكاء الاصطناعي أو سحب البيانات: {str(e)}")
