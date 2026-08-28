@@ -230,10 +230,11 @@ if analyze_btn:
                 # 3. إعداد العميل واستخدام آلية الكشف والمرونة المتعددة للنماذج (المرشحين)
                 client = genai.Client(api_key=api_key)
 
+                # حصر القائمة على إصدارات جيل 2.5 النظيفة واستبعاد الجيل القديم 1.5 تماماً
                 candidate_models = [
                     "gemini-2.5-flash",
                     "gemini-2.5-flash-lite",
-                    "gemini-1.5-flash",
+                    "gemini-2.5-pro",
                 ]
 
                 def get_working_model():
@@ -247,7 +248,7 @@ if analyze_btn:
                             if name in available:
                                 return name
                         for name in sorted(available):
-                            if "flash" in name and "flash-lite" not in name:
+                            if "2.5" in name and "flash" in name:
                                 return name
                         for name in sorted(available):
                             if "flash" in name:
@@ -267,8 +268,8 @@ if analyze_btn:
                             top_p=0.9
                         )
                     )
-                except Exception:
-                    last_error = None
+                except Exception as first_err:
+                    last_error = first_err
                     for name in candidate_models:
                         if name == model_name:
                             continue
