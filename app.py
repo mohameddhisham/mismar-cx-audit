@@ -102,16 +102,29 @@ if analyze_btn:
                     cs_rating=cs_rating,
                     overall_rating=overall_rating
                 )
-                
-                # استخدام النموذج الافتراضي والمستقر gemini-2.5-flash
-                response = client.models.generate_content(
-                    model='gemini-2.5-flash',
-                    contents=prompt_text,
-                    config=types.GenerateContentConfig(
-                        temperature=0.45,
-                        top_p=0.9
+
+                # النموذج المحدث بعد توقف gemini-2.5-flash عن العمل للمستخدمين الجدد
+                model_name = "gemini-3.6-flash"
+
+                try:
+                    response = client.models.generate_content(
+                        model=model_name,
+                        contents=prompt_text,
+                        config=types.GenerateContentConfig(
+                            temperature=0.45,
+                            top_p=0.9
+                        )
                     )
-                )
+                except Exception:
+                    # خطة بديلة في حال عدم توفر النموذج الأساسي مستقبلاً
+                    response = client.models.generate_content(
+                        model="gemini-2.5-flash-lite",
+                        contents=prompt_text,
+                        config=types.GenerateContentConfig(
+                            temperature=0.45,
+                            top_p=0.9
+                        )
+                    )
                 
                 ai_text = response.text
                 
