@@ -602,7 +602,7 @@ def analyze_order_rating(
     # Model
     # --------------------------------------------------------
 
-    model_name = "llama-3.3-70b-versatile"
+    model_name = "llama-3.1-8b-instant"
 
     # --------------------------------------------------------
     # Groq API call
