@@ -103,8 +103,40 @@ if analyze_btn:
                     overall_rating=overall_rating
                 )
 
-                # النموذج المحدث بعد توقف gemini-2.5-flash عن العمل للمستخدمين الجدد
-                model_name = "gemini-3.6-flash"
+                # قائمة مرشحين نجرب بيهم بالترتيب (الأحدث أولاً)
+                # نضيف هنا أي اسم جديد تعلنه جوجل، والكود هيختار أول واحد شغال فعلاً
+                candidate_models = [
+                    "gemini-3.6-flash",
+                    "gemini-3.5-flash-lite",
+                    "gemini-2.5-flash",
+                    "gemini-2.5-flash-lite",
+                ]
+
+                def get_working_model():
+                    """يجيب أول موديل شغال من القائمة، أو يكتشف موديل مناسب تلقائياً
+                    من قائمة الموديلات المتاحة فعلياً على حساب المستخدم."""
+                    # الخطوة 1: جرب المرشحين المعروفين بالترتيب
+                    try:
+                        available = {m.name.split("/")[-1] for m in client.models.list()}
+                    except Exception:
+                        available = None
+
+                    if available:
+                        for name in candidate_models:
+                            if name in available:
+                                return name
+                        # لو مفيش أي مرشح موجود، هات أول موديل flash متاح فعلياً
+                        for name in sorted(available):
+                            if "flash" in name and "flash-lite" not in name:
+                                return name
+                        for name in sorted(available):
+                            if "flash" in name:
+                                return name
+
+                    # الخطوة 2 (احتياطي لو فشل استدعاء list نفسه): جرب الأسماء واحد واحد
+                    return candidate_models[0]
+
+                model_name = get_working_model()
 
                 try:
                     response = client.models.generate_content(
@@ -116,15 +148,27 @@ if analyze_btn:
                         )
                     )
                 except Exception:
-                    # خطة بديلة في حال عدم توفر النموذج الأساسي مستقبلاً
-                    response = client.models.generate_content(
-                        model="gemini-2.5-flash-lite",
-                        contents=prompt_text,
-                        config=types.GenerateContentConfig(
-                            temperature=0.45,
-                            top_p=0.9
-                        )
-                    )
+                    # لو الموديل المختار فشل لأي سبب، جرب باقي المرشحين واحد واحد
+                    last_error = None
+                    response = None
+                    for name in candidate_models:
+                        if name == model_name:
+                            continue
+                        try:
+                            response = client.models.generate_content(
+                                model=name,
+                                contents=prompt_text,
+                                config=types.GenerateContentConfig(
+                                    temperature=0.45,
+                                    top_p=0.9
+                                )
+                            )
+                            break
+                        except Exception as e2:
+                            last_error = e2
+                            continue
+                    if response is None:
+                        raise last_error if last_error else Exception("لا يوجد موديل متاح حالياً")
                 
                 ai_text = response.text
                 
