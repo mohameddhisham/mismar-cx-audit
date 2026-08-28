@@ -6,6 +6,9 @@ import requests
 import streamlit as st
 from groq import Groq
 
+# ============================================================
+# PAGE CONFIG
+# ============================================================
 
 st.set_page_config(
     page_title="نظام تدقيق الطلبات والجودة | مسمار MisMar",
@@ -14,6 +17,9 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
+# ============================================================
+# CSS
+# ============================================================
 
 st.markdown(
     """
@@ -218,6 +224,9 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+# ============================================================
+# METABASE ENDPOINTS
+# ============================================================
 
 METABASE_ENDPOINTS = {
     "tickets": (
@@ -225,16 +234,19 @@ METABASE_ENDPOINTS = {
         "public/question/"
         "5f313cbe-6bb4-43bc-9b4d-70b8de7d17d4.json"
     ),
+
     "comments": (
         "https://analysis.mismarapp.com/"
         "public/question/"
         "82aba25f-d368-44e3-8392-dce163d78e23.json"
     ),
+
     "status_history": (
         "https://analysis.mismarapp.com/"
         "public/question/"
         "98fe13e6-298a-4775-8244-3015c9c720fe.json"
     ),
+
     "pricing": (
         "https://analysis.mismarapp.com/"
         "public/question/"
@@ -244,6 +256,9 @@ METABASE_ENDPOINTS = {
 
 GROQ_MODELS_URL = "https://api.groq.com/openai/v1/models"
 
+# ============================================================
+# GROQ MODELS API
+# ============================================================
 
 def get_groq_models(api_key: str) -> list[dict[str, Any]]:
     """جلب كل الموديلات التي يستطيع مفتاح Groq الحالي الوصول إليها فعلياً."""
@@ -267,7 +282,6 @@ def get_groq_models(api_key: str) -> list[dict[str, Any]]:
 
     data = response.json()
     models = data.get("data", [])
-
     if not isinstance(models, list):
         raise Exception("Groq returned an unexpected models response.")
 
@@ -285,7 +299,6 @@ def get_model_ids(api_key: str) -> list[str]:
 
 
 def choose_best_model(model_ids: list[str]) -> str | None:
-    """ترتيب تفضيل للموديلات المتاحة."""
     preferred_models = [
         "openai/gpt-oss-120b",
         "openai/gpt-oss-20b",
@@ -298,7 +311,6 @@ def choose_best_model(model_ids: list[str]) -> str | None:
     ]
 
     available = set(model_ids)
-
     for preferred in preferred_models:
         if preferred in available:
             return preferred
@@ -308,6 +320,9 @@ def choose_best_model(model_ids: list[str]) -> str | None:
 
     return None
 
+# ============================================================
+# FETCH ORDER DATA
+# ============================================================
 
 def fetch_order_data(order_id: int) -> dict[str, Any]:
     payload = {}
@@ -318,16 +333,13 @@ def fetch_order_data(order_id: int) -> dict[str, Any]:
                 params={"order_id": order_id},
                 timeout=20,
             )
-
             if response.status_code == 200:
                 try:
                     payload[key] = response.json()
                 except ValueError:
                     payload[key] = "Error: Invalid JSON returned by Metabase."
             else:
-                payload[key] = (
-                    f"Error HTTP {response.status_code}: {response.text[:500]}"
-                )
+                payload[key] = f"Error HTTP {response.status_code}: {response.text[:500]}"
         except requests.Timeout:
             payload[key] = "Error: Metabase request timed out."
         except requests.RequestException as exc:
@@ -337,15 +349,17 @@ def fetch_order_data(order_id: int) -> dict[str, Any]:
 
     return payload
 
+# ============================================================
+# DATA CLEANING UTILITY
+# ============================================================
 
 def clean_and_minify(data: Any, max_items: int = 10, max_chars: int = 1500) -> str:
-    """تخفيض حجم البيانات لعدم تجاوز حد التوكينات في API."""
     if not data:
         return "[]"
-
+        
     if isinstance(data, dict) and "data" in data:
         data = data["data"]
-
+        
     if isinstance(data, list):
         data = data[-max_items:]
         cleaned_list = []
@@ -353,98 +367,88 @@ def clean_and_minify(data: Any, max_items: int = 10, max_chars: int = 1500) -> s
             if isinstance(item, dict):
                 cleaned_dict = {}
                 for k, v in item.items():
-                    if v in (None, "", [], {}):
+                    if v in (None, "", [], {}): 
                         continue
                     key_lower = str(k).lower()
-                    if (
-                        "id" in key_lower
-                        or "url" in key_lower
-                        or "uuid" in key_lower
-                        or "token" in key_lower
-                    ):
+                    if "id" in key_lower or "url" in key_lower or "uuid" in key_lower or "token" in key_lower:
                         continue
                     cleaned_dict[k] = v
                 cleaned_list.append(cleaned_dict)
             else:
                 cleaned_list.append(item)
-
-        result_str = json.dumps(
-            cleaned_list, ensure_ascii=False, separators=(",", ":")
-        )
+                
+        result_str = json.dumps(cleaned_list, ensure_ascii=False, separators=(',', ':'))
     else:
-        result_str = json.dumps(
-            data, ensure_ascii=False, separators=(",", ":")
-        )
-
+        result_str = json.dumps(data, ensure_ascii=False, separators=(',', ':'))
+        
     if len(result_str) > max_chars:
         result_str = result_str[-max_chars:]
-
+        
     return result_str
 
+# ============================================================
+# BUILD AUDIT PROMPT (ENHANCED FORENSIC AUDIT PROMPT)
+# ============================================================
 
 def build_audit_prompt(
     order_id: int,
     order_data: dict[str, Any],
     ratings: dict[str, int],
 ) -> str:
-    ratings_json = json.dumps(ratings, ensure_ascii=False, separators=(",", ":"))
 
-    tickets_json = clean_and_minify(
-        order_data.get("tickets"), max_items=5, max_chars=1200
-    )
-    comments_json = clean_and_minify(
-        order_data.get("comments"), max_items=15, max_chars=2500
-    )
-    status_history_json = clean_and_minify(
-        order_data.get("status_history"), max_items=10, max_chars=1200
-    )
-    pricing_json = clean_and_minify(
-        order_data.get("pricing"), max_items=5, max_chars=1200
-    )
+    ratings_json = json.dumps(ratings, ensure_ascii=False, separators=(',', ':'))
+
+    tickets_json = clean_and_minify(order_data.get("tickets"), max_items=5, max_chars=1200)
+    comments_json = clean_and_minify(order_data.get("comments"), max_items=15, max_chars=2500)
+    status_history_json = clean_and_minify(order_data.get("status_history"), max_items=10, max_chars=1200)
+    pricing_json = clean_and_minify(order_data.get("pricing"), max_items=5, max_chars=1200)
 
     prompt = f"""
-أنت كبير مدققي العمليات وتجربة العملاء (Senior Operations & CX Forensic Auditor) في شركة صيانة السيارات (مسمار - MisMar).
-وظيفتك إجراء فحص ودراسة جنائية تشغيلية متكاملة لبيانات الطلب رقم #{order_id} للوصول للسبب الجذر المباشر خلف التقييم المنخفض.
+أنت Senior Operations & CX Forensic Auditor في منصة "مسمار - MisMar" لصيانة السيارات.
+مهمتك إجراء تدقيق جنائي تشغيلي لبيانات الطلب #{order_id} واستخراج التبرير التشغيلي المباشر والدقيق لمدير العمليات.
 
 تقييمات العميل المدخلة للطلب:
 {ratings_json}
 
-البيانات المتاحة للطلب من النظام:
-1. 🎫 تذاكر الشكاوى والمتابعة (افحص خانة Description، خانة Result، تواريخ الإنشاء والإغلاق، واسم قسم التذكرة): 
+بيانات الطلب النيئة المستخرجة من النظام:
+1. 🎫 تذاكر الشكاوى والمتابعة (اقرأ وصف الشكوى Description والنتيجة Result وقسم التذكرة):
 {tickets_json}
 
-2. 💬 محادثات الشات والتعليقات الداخلية (افحص نصوص المحادثات بين التشغيل والمركز والعميل، التواقيت، هوية المُرسل، تفاصيل المفاوضات وأجور اليد): 
+2. 💬 محادثات الشات والتعليقات الداخلية (افحص نصوص المحادثات بين التشغيل والمركز والعميل، التواقيت، وهوية المُرسل):
 {comments_json}
 
-3. ⏱️ التسلسل الزمني للحالات والمدد (احسب المدة بين كل حالة وأخرى بالدقيقة والساعة واكتشف محطات التعطيل): 
+3. ⏱️ التسلسل الزمني للحالات والمدد (احسب أوقات الانتظار والتأخير بين الحالات المختلفة):
 {status_history_json}
 
-4. 💰 طلبات التسعير وعروض الأسعار (افحص الفارق الزمني بين طلب التسعير ورفع عرض السعر، تفاصيل قطع الغيار مقابل أجور اليد، العروض المرفوضة والمقبولة): 
+4. 💰 طلبات التسعير وعروض الأسعار (افحص الفارق الزمني للتسعير، أجور اليد مقارنة بأسعار القطع، والرفض/القبول):
 {pricing_json}
 
-=== 🎯 تعليمات وقواعد الصياغة الصارمة ===
-قم بتقسيم إجابتك إلى قسمين يفصل بينهما السطر `===SPLIT===`:
+=== 🎯 تعليمات الصياغة والتحليل الجنائي الصارمة ===
+قم بتقسيم إجابتك إلى قسمين تفصل بينهما الكلمة المفتاحية `===SPLIT===`:
 
 القسم الأول: [التبرير التشغيلي المباشر لمدير العمليات]
-- فقرة واحدة متصلة ومباشرة فقط (من 4 إلى 5 سطور كحد أقصى).
-- 🛑 يُمنع تماماً البدء بذكر أو سرد درجات التقييمات مثل: (يعود سبب تقييم العميل للسعر بـ 2/5 والوقت بـ 3/5...).
-- 🛑 يُمنع تماماً استخدام جمل فضفاضة مثل "بسبب كثرة عروض الأسعار والارتباك" دون ذكر السبب الحقيقي الذي أدى لرفض العروض.
-- 🟢 ابدأ فوراً وبشكل مباشر بالسبب الحقيقي المستخرج من التذاكر والشات.
-- 🔍 البحث عن السبب الجذر للأسعار: اربط اعتراض السعر بالنص المكتوب داخل التذاكر (مثل: اعتراض العميل على ارتفاع أجور اليد مقارنة بأسعار السوق، إضافة قطع اختيارية بشكل مفاجئ، أو الخلاف على تسعير قطع التشليح).
-- 🔍 البحث عن السبب الجذر للتأخير: ارجع لتعليقات الشات والتسلسل الزمني لتحديد المتسبب الفعلي في التأخير (مثل: تأخر المركز في التشخيص المبدئي، أو تأخر توريد القطع من المورد).
-- يُمنع استخدام القوائم، العناوين، أو أرقام التذاكر والعروض الداخلية (مثل #658323).
+- اكتب فقرة واحدة فقط متصلة من 3 إلى 5 سطور (جاهزة للنسخ واللصق فوراً لمدير العمليات).
+- 🛑 ممنوع نهائياً البدء بسرد الدرجات أو التقييمات (مثل: "يعود سبب تقييم العميل 2/5 للسعر...").
+- 🛑 ممنوع استخدام العبارات العامة والفضفاضة (مثل "بسبب التأخير والأخطاء التشغيلية").
+- 🟢 ابدأ فوراً بالسبب التشغيلي المباشر والجذري (مثال: "يعود سبب اعتراض العميل على السعر إلى...").
+- 🔍 في أسباب السعر: ابحث عن السبب الحقيقي من الشات والتذاكر (مثل: المبالغة في أجور يد الفحص، إضافة القطع الاستهلاكية بدون موافقة مبدئية، أو الخلاف على تسعير قطع التشليح).
+- 🔍 في أسباب الوقت: حدد الطرف المتسبب بالتأخير بدقة من واقع التوقيتات (مثل: تأخر مركز الصيانة 6 ساعات في التشخيص، أو تأخر المورد في توفير القطع).
+- يُمنع استخدام القوائم أو العناوين أو أرقام التذاكر والعروض الداخليّة في هذا القسم.
 
 ===SPLIT===
 
 القسم الثاني: [الأدلة والوقائع التفصيلية والربط الزمني]
-- اكتب هنا بتفصيل كامل وبلا حدود للحجم كافة الأدلة والحقائق المستخرجة من البيانات الأربعة التي أدت للصياغة أعلاه:
-  1. ⏱️ التحليل الزمني للدلتا (Timeline Deltas): احسب بدقة كم استغرق رفع عرض السعر بعد طلب التسعير، وكم استغرقت الحالة الأكثر تأخيراً.
-  2. 🎫 أدلة التذاكر: اقتبس نصوص الشكوى (description) ونتيجة التذكرة (result) كلمة بكلمة.
-  3. 💬 أدلة الشات: اذكر رسائل المفاوضات ومحادثات مركز الصيانة بالنص مع التوقيت.
-  4. 💰 تحليل التسعير: حدد فروق الأسعار، اعتراضات أجور اليد مقابل قطع الغيار، وسبب رفض العروض المبدئية.
+اكتب بتفصيل كامل كافة الحقائق والأدلة المساندة المستخرجة من البيانات:
+1. ⏱️ التحليل الزمني (Timeline Deltas): احسب المدة الدقيقة بين طلب التسعير ورفع العرض، وأطول حالة تعطيل بالدقيقة/الساعة.
+2. 🎫 أدلة التذاكر: اقتبس نص الشكوى (Description) والنتيجة (Result) بالنص.
+3. 💬 أدلة الشات: اقتبس نصوص المفاوضات والرسائل الهامة مع التوقيتات والمُرسل.
+4. 💰 تحليل التسعير: فكّك اعتراضات العميل على أجور اليد مقابل قطع الغيار، وسبب رفض العروض المبدئية.
 """
     return prompt
 
+# ============================================================
+# GROQ ANALYSIS RUNNER
+# ============================================================
 
 def analyze_order_rating(
     api_key: str,
@@ -454,12 +458,7 @@ def analyze_order_rating(
 ) -> str:
 
     order_data = fetch_order_data(order_id)
-
-    prompt = build_audit_prompt(
-        order_id,
-        order_data,
-        ratings,
-    )
+    prompt = build_audit_prompt(order_id, order_data, ratings)
 
     client = Groq(api_key=api_key.strip())
 
@@ -469,11 +468,7 @@ def analyze_order_rating(
             messages=[
                 {
                     "role": "system",
-                    "content": (
-                        "أنت Senior Operations وCX Forensic Auditor. "
-                        "حلل البيانات بدقة. لا تخترع أي معلومات. "
-                        "اعتمد فقط على البيانات المقدمة."
-                    ),
+                    "content": "أنت Senior Operations وCX Forensic Auditor. حلل البيانات بدقة ولا تخترع أي معلومات واستند فقط على المرفقات.",
                 },
                 {
                     "role": "user",
@@ -490,15 +485,17 @@ def analyze_order_rating(
         )
 
     if not response or not response.choices:
-        raise Exception("Groq returned no valid choices.")
+        raise Exception("Groq returned an empty response.")
 
     content = response.choices[0].message.content
-
     if not content:
         raise Exception("Groq returned empty content.")
 
     return content.strip()
 
+# ============================================================
+# SIDEBAR UI
+# ============================================================
 
 with st.sidebar:
     st.image(
@@ -535,11 +532,9 @@ with st.sidebar:
     if api_key:
         try:
             available_models = get_model_ids(api_key)
-
             if available_models:
                 recommended_model = choose_best_model(available_models)
                 default_index = 0
-
                 if recommended_model in available_models:
                     default_index = available_models.index(recommended_model)
 
@@ -555,7 +550,6 @@ with st.sidebar:
                 st.code(selected_model, language="text")
             else:
                 st.error("لم يتم العثور على أي موديلات.")
-
         except Exception as exc:
             st.error("❌ فشل اكتشاف موديلات Groq")
             st.code(str(exc), language="text")
@@ -565,6 +559,9 @@ with st.sidebar:
             for index, model in enumerate(available_models, start=1):
                 st.write(f"{index}. `{model}`")
 
+# ============================================================
+# MAIN LAYOUT & INPUTS
+# ============================================================
 
 col1, col2 = st.columns([1, 1], gap="large")
 
@@ -602,6 +599,9 @@ with col1:
     st.markdown("<br>", unsafe_allow_html=True)
     analyze_btn = st.button("🚀 بدء التدقيق العميق واستخراج التبرير")
 
+# ============================================================
+# OUTPUT & RENDERING
+# ============================================================
 
 with col2:
     st.subheader("📊 مخرجات التقرير والتدقيق")
@@ -612,9 +612,7 @@ with col2:
         elif not selected_model:
             st.error("⚠️ لم يتم العثور على موديل متاح في Groq.")
         else:
-            with st.spinner(
-                "⏳ جاري الفحص الجنائي الرقمي لبيانات الطلب والتذاكر والمحادثات..."
-            ):
+            with st.spinner("⏳ جاري الفحص الجنائي الرقمي لبيانات الطلب والتذاكر والمحادثات..."):
                 try:
                     full_response = analyze_order_rating(
                         api_key=api_key,
@@ -624,9 +622,7 @@ with col2:
                     )
 
                     if "===SPLIT===" in full_response:
-                        justification, evidence = full_response.split(
-                            "===SPLIT===", 1
-                        )
+                        justification, evidence = full_response.split("===SPLIT===", 1)
                     else:
                         justification = full_response
                         evidence = "لم يتم تفكيك الأدلة بشكل منفصل."
@@ -650,7 +646,6 @@ if "audit_result" in st.session_state and st.session_state["audit_result"]:
     evidence = result["evidence"]
 
     st.markdown("### 📝 التبرير التشغيلي (جاهز للنسخ لمدير العمليات):")
-
     safe_justification = html.escape(justification)
 
     st.markdown(
@@ -669,7 +664,6 @@ if "audit_result" in st.session_state and st.session_state["audit_result"]:
     )
 
     st.markdown("### 🔍 الأدلة والوقائع التفصيلية ومحطات الربط الزمني:")
-
     safe_evidence = html.escape(evidence)
 
     st.markdown(
@@ -681,10 +675,7 @@ if "audit_result" in st.session_state and st.session_state["audit_result"]:
         unsafe_allow_html=True,
     )
 
-    st.caption(
-        f"Order ID: {result['order_id']} | Model: {result['model']}"
-    )
-
+    st.caption(f"Order ID: {result['order_id']} | Model: {result['model']}")
 else:
     if not analyze_btn:
         st.info("👈 قم بإدخال رقم الطلب والضغط على زر التحليل لعرض النتائج هنا.")
