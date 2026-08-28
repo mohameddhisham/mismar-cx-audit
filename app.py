@@ -156,12 +156,7 @@ def analyze_order_rating(api_key: str, order_id: int, ratings: dict) -> str:
     # قائمة موديلات مرشحة بالترتيب (الأحدث أولاً). لو موديل معين اتلغى أو رجّع 404،
     # الكود بيجرب اللي بعده تلقائياً من غير ما يوقف التطبيق.
     candidate_models = [
-        "gemini-3.6-flash",
-        "gemini-3.5-flash-lite",
-        "gemini-3-pro",
         "gemini-2.5-flash",
-        "gemini-2.5-flash-lite",
-        "gemini-2.5-pro",
     ]
 
     headers = {
@@ -201,7 +196,7 @@ with st.sidebar:
     # المفتاح دلوقتي بيتقرا من Streamlit Secrets فقط، ومش مكتوب صريح في الكود.
     # ده مهم جداً: أي مفتاح يتكتب صريح في كود مرفوع على GitHub بيتكشف تلقائياً
     # عن طريق GitHub Secret Scanning وجوجل بتلغيه فوراً كإجراء حماية.
-    secret_key = st.secrets.get("GEMINI_API_KEY", "")
+    secret_key = st.secrets.get("GEMINI_API_KEY", "").strip()
 
     api_key_input = st.text_input(
         "Gemini API Key",
