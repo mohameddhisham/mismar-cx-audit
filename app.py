@@ -485,38 +485,54 @@ def fetch_order_data(
 # ============================================================
 # DATA CLEANING UTILITY
 # ============================================================
-def clean_and_minify(data: Any, max_items: int = 30) -> str:
+# ============================================================
+# DATA CLEANING UTILITY (AGGRESSIVE)
+# ============================================================
+def clean_and_minify(data: Any, max_items: int = 10, max_chars: int = 1500) -> str:
     """
-    Cleans the Metabase JSON by removing nulls/empty strings,
-    limits the number of records, and minifies the output to save tokens.
+    Cleans the Metabase JSON by removing empty strings, dropping 
+    useless ID/URL columns, limits items, and enforces a strict character limit.
     """
     if not data:
         return "[]"
         
-    # If the response contains a 'data' key (common in Metabase API)
     if isinstance(data, dict) and "data" in data:
         data = data["data"]
         
     if isinstance(data, list):
-        # 1. Limit to the most recent `max_items` to avoid massive payloads
+        # 1. Limit to the most recent items
         data = data[-max_items:]
         
         cleaned_list = []
         for item in data:
             if isinstance(item, dict):
-                # 2. Remove keys where the value is None, empty string, or empty list
-                cleaned_dict = {
-                    k: v for k, v in item.items() 
-                    if v not in (None, "", [], {})
-                }
+                cleaned_dict = {}
+                for k, v in item.items():
+                    # 2. Skip empty values
+                    if v in (None, "", [], {}): 
+                        continue
+                    
+                    # 3. Skip heavy, useless metadata (IDs, URLs, UUIDs)
+                    key_lower = str(k).lower()
+                    if "id" in key_lower or "url" in key_lower or "uuid" in key_lower or "token" in key_lower:
+                        continue
+                        
+                    cleaned_dict[k] = v
                 cleaned_list.append(cleaned_dict)
             else:
                 cleaned_list.append(item)
                 
-        # 3. Use separators=(',', ':') to remove all spaces and newlines
-        return json.dumps(cleaned_list, ensure_ascii=False, separators=(',', ':'))
+        # Compress without spaces
+        result_str = json.dumps(cleaned_list, ensure_ascii=False, separators=(',', ':'))
+    else:
+        result_str = json.dumps(data, ensure_ascii=False, separators=(',', ':'))
         
-    return json.dumps(data, ensure_ascii=False, separators=(',', ':'))
+    # 4. HARD FIREWALL: Truncate string if it exceeds max_chars
+    # This guarantees you NEVER exceed Groq's 8,000 token limit.
+    if len(result_str) > max_chars:
+        result_str = result_str[-max_chars:] # Keep the END (most recent data)
+        
+    return result_str
 
 
 # ============================================================
@@ -528,27 +544,14 @@ def build_audit_prompt(
     ratings: dict[str, int],
 ) -> str:
 
-    # --------------------------------------------------------
-    # Convert ratings to compact JSON BEFORE building the f-string
-    # --------------------------------------------------------
-    ratings_json = json.dumps(
-        ratings, 
-        ensure_ascii=False, 
-        separators=(',', ':')
-    )
+    ratings_json = json.dumps(ratings, ensure_ascii=False, separators=(',', ':'))
 
-    # --------------------------------------------------------
-    # Clean and minify all Metabase data
-    # (Adjust max_items if you still hit limits. 30 is usually safe)
-    # --------------------------------------------------------
-    tickets_json = clean_and_minify(order_data.get("tickets"), max_items=15)
-    comments_json = clean_and_minify(order_data.get("comments"), max_items=40)
-    status_history_json = clean_and_minify(order_data.get("status_history"), max_items=20)
-    pricing_json = clean_and_minify(order_data.get("pricing"), max_items=15)
+    # Strict limits applied to each category to stay under 8k tokens total
+    tickets_json = clean_and_minify(order_data.get("tickets"), max_items=5, max_chars=1200)
+    comments_json = clean_and_minify(order_data.get("comments"), max_items=15, max_chars=2500)
+    status_history_json = clean_and_minify(order_data.get("status_history"), max_items=10, max_chars=1200)
+    pricing_json = clean_and_minify(order_data.get("pricing"), max_items=5, max_chars=1200)
 
-    # --------------------------------------------------------
-    # Build prompt
-    # --------------------------------------------------------
     prompt = f"""
 أنت كبير مدققي العمليات وتجربة العملاء
 (Senior Operations & CX Forensic Auditor)
@@ -597,17 +600,12 @@ def build_audit_prompt(
 القسم الأول
 التبرير التشغيلي المباشر لمدير العمليات
 ==================================================
-اكتب فقرة واحدة فقط.
-من 4 إلى 5 سطور كحد أقصى.
-ابدأ مباشرة بالسبب الجذري الحقيقي.
-ممنوع البدء بدرجات التقييم.
+اكتب فقرة واحدة فقط. من 4 إلى 5 سطور كحد أقصى.
+ابدأ مباشرة بالسبب الجذري الحقيقي. ممنوع البدء بدرجات التقييم.
 لا تستخدم أسباباً عامة إلا إذا كان لديك دليل فعلي يثبت ذلك.
 اربط اعتراض السعر بالنص الموجود في التذاكر أو المحادثات.
 حدد سبب التأخير الحقيقي والمتسبب فيه إذا كان مثبتاً.
-لا تخترع معلومات.
-لا تستخدم قوائم.
-لا تستخدم أرقام التذاكر الداخلية.
-لا تستخدم أرقام العروض الداخلية.
+لا تخترع معلومات، لا تستخدم قوائم، ولا أرقام التذاكر/العروض.
 
 ==================================================
 القسم الثاني
@@ -615,30 +613,15 @@ def build_audit_prompt(
 ==================================================
 اشرح الأدلة التي أدت للاستنتاج.
 
-1. ⏱️ Timeline Deltas
-احسب:
-- مدة طلب التسعير إلى رفع العرض.
-- أطول حالة انتظار.
-- مدة كل مرحلة مهمة.
-- نقاط التعطيل.
-
-2. 🎫 أدلة التذاكر
-اذكر (Description, Result, التاريخ، القسم) واقتبس النصوص المهمة.
-
-3. 💬 أدلة الشات
-اذكر (الرسائل، المفاوضات، التوقيت، هوية المرسل).
-
-4. 💰 تحليل التسعير
-حلل (فروق الأسعار، أجور اليد، قطع الغيار، سبب الرفض).
+1. ⏱️ Timeline Deltas (المدة، أطول انتظار، التعطيل)
+2. 🎫 أدلة التذاكر (اقتبس النصوص المهمة)
+3. 💬 أدلة الشات (المفاوضات، التوقيت، المرسل)
+4. 💰 تحليل التسعير (فروق الأسعار، الرفض)
 
 ==================================================
 قواعد الدقة
 ==================================================
-- لا تخترع أي معلومة.
-- اعتمد فقط على البيانات.
-- إذا كانت البيانات غير كافية قل ذلك.
-- لا تفترض.
-- افصل الحقيقة عن الاستنتاج.
+لا تخترع أي معلومة، اعتمد فقط على البيانات المقدمة أعلاه، وافصل الحقيقة عن الاستنتاج.
 """
     return prompt
 
