@@ -1,12 +1,9 @@
 import json
+import os
 import requests
 import streamlit as st
-from google import genai
-from google.genai import types
 
-# ==========================================
-# 1. إعدادات الصفحة والهوية البصرية الرسمية لمسمار
-# ==========================================
+# إعدادات الصفحة الرسمية لمسمار
 st.set_page_config(
     page_title="نظام تدقيق الطلبات والجودة | مسمار MisMar",
     page_icon="🚗",
@@ -14,12 +11,11 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# تطبيق التنسيقات البصرية والهوية (CSS)
 st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800&display=swap');
     
-    html, body, [class*="css"] {
+    html, body, [class*="css"]  {
         font-family: 'Tajawal', sans-serif;
         direction: rtl;
         text-align: right;
@@ -94,9 +90,6 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# ==========================================
-# 2. روابط Metabase لجلب بيانات الطلبات
-# ==========================================
 METABASE_ENDPOINTS = {
     "tickets": "https://analysis.mismarapp.com/public/question/5f313cbe-6bb4-43bc-9b4d-70b8de7d17d4.json",
     "comments": "https://analysis.mismarapp.com/public/question/82aba25f-d368-44e3-8392-dce163d78e23.json",
@@ -115,27 +108,103 @@ def fetch_order_data(order_id: int) -> dict:
             payload[key] = f"Error: {str(e)}"
     return payload
 
-# ==========================================
-# 3. القائمة الجانبية والشعار
-# ==========================================
+def analyze_order_rating(api_key: str, order_id: int, ratings: dict) -> str:
+    order_data = fetch_order_data(order_id)
+    ratings_context = f"تقييمات العميل المدخلة للطلب: {ratings}\n" if ratings else ""
+
+    prompt_text = f"""
+    أنت كبير مدققي العمليات وتجربة العملاء (Senior Operations & CX Forensic Auditor) في شركة صيانة السيارات (مسمار - MisMar).
+    وظيفتك إجراء فحص ودراسة جنائية تشغيلية متكاملة لبيانات الطلب رقم #{order_id} للوصول للسبب الجذر المباشر خلف التقييم المنخفض.
+
+    {ratings_context}
+
+    البيانات المتاحة للطلب:
+    1. 🎫 تذاكر الشكاوى والمتابعة (افحص خانة Description، خانة Result، تواريخ الإنشاء والإغلاق، واسم قسم التذكرة): 
+    {json.dumps(order_data.get('tickets'), ensure_ascii=False, indent=2)}
+
+    2. 💬 محادثات الشات والتعليقات الداخلية (افحص نصوص المحادثات بين التشغيل والمركز والعميل، التواقيت، هوية المُرسل، تفاصيل المفاوضات وأجور اليد): 
+    {json.dumps(order_data.get('comments'), ensure_ascii=False, indent=2)}
+
+    3. ⏱️ التسلسل الزمني للحالات والمدد (احسب المدة بين كل حالة وأخرى بالدقيقة والساعة واكتشف محطات التعطيل): 
+    {json.dumps(order_data.get('status_history'), ensure_ascii=False, indent=2)}
+
+    4. 💰 طلبات التسعير وعروض الأسعار (افحص الفارق الزمني بين طلب التسعير ورفع عرض السعر، تفاصيل قطع الغيار مقابل أجور اليد، العروض المرفوضة والمقبولة): 
+    {json.dumps(order_data.get('pricing'), ensure_ascii=False, indent=2)}
+
+    === 🎯 تعليمات وقواعد الصياغة الصارمة ===
+    قم بتقسيم إجابتك إلى قسمين يفصل بينهما السطر `===SPLIT===`:
+
+    القسم الأول: [التبرير التشغيلي المباشر لمدير العمليات]
+    - فقرة واحدة متصلة ومباشرة فقط (من 4 إلى 5 سطور كحد أقصى).
+    - 🛑 **يُمنع تماماً** البدء بذكر أو سرد درجات التقييمات مثل: (يعود سبب تقييم العميل للسعر بـ 2/5 والوقت بـ 3/5...).
+    - 🛑 **يُمنع تماماً** استخدام جمل فضفاضة مثل "بسبب كثرة عروض الأسعار والارتباك" دون ذكر السبب الحقيقي الذي أدى لرفض العروض.
+    - 🟢 **ابدأ فوراً وبشكل مباشر** بالسبب الحقيقي المستخرج من التذاكر والشات.
+    - 🔍 **البحث عن السبب الجذر للأسعار:** اربط اعتراض السعر بالنص المكتوب داخل التذاكر (مثل: اعتراض العميل على ارتفاع أجور اليد مقارنة بأسعار السوق، إضافة قطع اختيارية بشكل مفاجئ دون استشارة العميل، أو الخلاف على تسعير قطع التشليح).
+    - 🔍 **البحث عن السبب الجذر للتأخير:** ارجع لتعليقات الشات والتسلسل الزمني لتحديد المتسبب الفعلي في التأخير (مثل: تأخر المركز في التشخيص المبدئي، أو تأخر توريد القطع من المورد).
+    - يُمنع استخدام القوائم، العناوين، أو أرقام التذاكر والعروض الداخلية (مثل #658323).
+
+    ===SPLIT===
+
+    القسم الثاني: [الأدلة والوقائع التفصيلية والربط الزمني]
+    - اكتب هنا بتفصيل كامل وبلا حدود للحجم كافة الأدلة والحقائق المستخرجة من البيانات الأربعة التي أدت للصياغة أعلاه:
+      1. ⏱️ التحليل الزمني للدلتا (Timeline Deltas): احسب بدقة كم استغرق رفع عرض السعر بعد طلب التسعير، وكم استغرقت الحالة الأكثر تأخيراً.
+      2. 🎫 أدلة التذاكر: اقتبس نصوص الشكوى (`description`) ونتيجة التذكرة (`result`) كلمة بكلمة (مثل شكاوى أجور اليد والمقارنة بالسوق).
+      3. 💬 أدلة الشات: اذكر رسائل المفاوضات ومحادثات مركز الصيانة بالنص مع التوقيت.
+      4. 💰 تحليل التسعير: حدد فروق الأسعار، اعتراضات أجور اليد مقابل قطع الغيار، وسبب رفض العروض المبدئية.
+    """
+
+    # قائمة موديلات مرشحة بالترتيب (الأحدث أولاً). لو موديل معين اتلغى أو رجّع 404،
+    # الكود بيجرب اللي بعده تلقائياً من غير ما يوقف التطبيق.
+    candidate_models = [
+        "gemini-3.6-flash",
+        "gemini-3.5-flash-lite",
+        "gemini-3-pro",
+        "gemini-2.5-flash",
+        "gemini-2.5-flash-lite",
+        "gemini-2.5-pro",
+    ]
+
+    headers = {
+        'Content-Type': 'application/json',
+        'x-goog-api-key': api_key
+    }
+    data = {
+        "contents": [{"parts": [{"text": prompt_text}]}],
+        "generationConfig": {
+            "temperature": 0.3,  # درجة منخفضة للالتزام التام بالحقائق وتجنب التخمين
+            "topP": 0.9
+        }
+    }
+
+    last_error = None
+    for model_name in candidate_models:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent"
+        response = requests.post(url, headers=headers, json=data)
+
+        if response.status_code == 200:
+            result_json = response.json()
+            return result_json['candidates'][0]['content']['parts'][0]['text']
+
+        # لو الموديل مش موجود (404) أو مش متاح، جرب اللي بعده في القائمة
+        last_error = f"خطأ في الاتصال بالذكاء الاصطناعي ({response.status_code}) عبر موديل {model_name}: {response.text}"
+        if response.status_code == 404:
+            continue
+        else:
+            raise Exception(last_error)
+
+    raise Exception(last_error if last_error else "لم يتم العثور على أي موديل متاح من قائمة المرشحين.")
+
 with st.sidebar:
     st.image("https://mismarapp.com/static/media/logo.f6cf70e4.svg", width=200)
     st.markdown("### ⚙️ إعدادات النظام")
     
-    secret_key = st.secrets.get("GEMINI_API_KEY", "")
-    api_key_input = st.text_input("Gemini API Key", value=secret_key, type="password")
+    api_key_input = st.text_input(
+        "Gemini API Key",
+        value="AQ.Ab8RN6IHOFVuYqpUHg5k0eR0DH4IcCpcuOcduV4oVZeOGNe1-w",
+        type="password",
+        help="أدخل مفتاح الـ API الخاص بـ Gemini"
+    )
 
-    api_key = api_key_input.strip() if api_key_input else secret_key.strip()
-
-    if not api_key:
-        st.warning("⚠️ يرجى إدخال Gemini API Key للبدء.")
-
-    st.markdown("---")
-    st.info("💡 هذا التطبيق مخصص لفريق الجودة والتدقيق التشغيلي لتسهيل تحليل الأسباب الجذرية لتقييمات العملاء.")
-
-# ==========================================
-# 4. الواجهة الرئيسية وإدخال التقييمات
-# ==========================================
 st.markdown("""
 <div class="mismar-header">
     <h1>🔍 نظام تدقيق الطلبات وتجربة العملاء (MisMar CX Audit)</h1>
@@ -143,12 +212,11 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-col_input, col_result = st.columns([1, 1], gap="large")
+col1, col2 = st.columns([1, 1], gap="large")
 
-with col_input:
+with col1:
     st.subheader("📋 بيانات الطلب والتقييمات")
-    
-    order_id = st.number_input("رقم الطلب (Order ID)", min_value=1000000, max_value=9999999, value=1034406, step=1)
+    order_id = st.number_input("رقم الطلب (Order ID)", value=1034406, step=1)
     
     st.markdown("##### ⭐️ تقييمات العميل المدخلة:")
     
@@ -168,172 +236,47 @@ with col_input:
         "خدمة العملاء": cs_rating,
         "التقييم العام": overall_rating
     }
-
+    
     st.markdown("<br>", unsafe_allow_html=True)
     analyze_btn = st.button("🚀 بدء التدقيق العميق واستخراج التبرير")
 
-# ==========================================
-# 5. منطق التحليل واستدعاء نموذج الذكاء الاصطناعي
-# ==========================================
-if analyze_btn:
-    if not api_key:
-        st.error("❌ لا يمكن إجراء التحليل بدون إدخال المفتاح!")
-    else:
-        with st.spinner("⏳ جاري سحب بيانات الطلب والجداول والجنايات الرقمية وتحليلها..."):
-            try:
-                # 1. سحب بيانات Metabase الفعلية للطلب
-                order_data = fetch_order_data(order_id)
-                ratings_context = f"تقييمات العميل المدخلة للطلب: {sample_ratings}\n"
-
-                # 2. بناء البرومبت الشامل المزود بالبيانات المباشرة
-                prompt_text = f"""
-                أنت كبير مدققي العمليات وتجربة العملاء (Senior Operations & CX Forensic Auditor) في شركة صيانة السيارات (مسمار - MisMar).
-                وظيفتك إجراء فحص ودراسة جنائية تشغيلية متكاملة لبيانات الطلب رقم #{order_id} للوصول للسبب الجذر المباشر خلف التقييم المنخفض.
-
-                {ratings_context}
-
-                البيانات المتاحة للطلب من النظام:
-                1. 🎫 تذاكر الشكاوى والمتابعة (افحص خانة Description، خانة Result، تواريخ الإنشاء والإغلاق، واسم قسم التذكرة): 
-                {json.dumps(order_data.get('tickets'), ensure_ascii=False, indent=2)}
-
-                2. 💬 محادثات الشات والتعليقات الداخلية (افحص نصوص المحادثات بين التشغيل والمركز والعميل، التواقيت، هوية المُرسل، تفاصيل المفاوضات وأجور اليد): 
-                {json.dumps(order_data.get('comments'), ensure_ascii=False, indent=2)}
-
-                3. ⏱️ التسلسل الزمني للحالات والمدد (احسب المدة بين كل حالة وأخرى بالدقيقة والساعة واكتشف محطات التعطيل): 
-                {json.dumps(order_data.get('status_history'), ensure_ascii=False, indent=2)}
-
-                4. 💰 طلبات التسعير وعروض الأسعار (افحص الفارق الزمني بين طلب التسعير ورفع عرض السعر، تفاصيل قطع الغيار مقابل أجور اليد، العروض المرفوضة والمقبولة): 
-                {json.dumps(order_data.get('pricing'), ensure_ascii=False, indent=2)}
-
-                === 🎯 تعليمات وقواعد الصياغة الصارمة ===
-                قم بتقسيم إجابتك إلى قسمين يفصل بينهما السطر `===SPLIT===`:
-
-                القسم الأول: [التبرير التشغيلي المباشر لمدير العمليات]
-                - فقرة واحدة متصلة ومباشرة فقط (من 4 إلى 5 سطور كحد أقصى).
-                - 🛑 يُمنع تماماً البدء بذكر أو سرد درجات التقييمات مثل: (يعود سبب تقييم العميل للسعر بـ 2/5 والوقت بـ 3/5...).
-                - 🛑 يُمنع تماماً استخدام جمل فضفاضة مثل "بسبب كثرة عروض الأسعار والارتباك" دون ذكر السبب الحقيقي الذي أدى لرفض العروض.
-                - 🟢 ابدأ فوراً وبشكل مباشر بالسبب الحقيقي المستخرج من التذاكر والشات.
-                - 🔍 البحث عن السبب الجذر للأسعار: اربط اعتراض السعر بالنص المكتوب داخل التذاكر (مثل: اعتراض العميل على ارتفاع أجور اليد مقارنة بأسعار السوق، إضافة قطع اختيارية بشكل مفاجئ، أو الخلاف على تسعير قطع التشليح).
-                - 🔍 البحث عن السبب الجذر للتأخير: ارجع لتعليقات الشات والتسلسل الزمني لتحديد المتسبب الفعلي في التأخير (مثل: تأخر المركز في التشخيص المبدئي، أو تأخر توريد القطع من المورد).
-                - يُمنع استخدام القوائم، العناوين، أو أرقام التذاكر والعروض الداخلية (مثل #658323).
-
-                ===SPLIT===
-
-                القسم الثاني: [الأدلة والوقائع التفصيلية والربط الزمني]
-                - اكتب هنا بتفصيل كامل وبلا حدود للحجم كافة الأدلة والحقائق المستخرجة من البيانات الأربعة التي أدت للصياغة أعلاه:
-                  1. ⏱️ التحليل الزمني للدلتا (Timeline Deltas): احسب بدقة كم استغرق رفع عرض السعر بعد طلب التسعير، وكم استغرقت الحالة الأكثر تأخيراً.
-                  2. 🎫 أدلة التذاكر: اقتبس نصوص الشكوى (`description`) ونتيجة التذكرة (`result`) كلمة بكلمة.
-                  3. 💬 أدلة الشات: اذكر رسائل المفاوضات ومحادثات مركز الصيانة بالنص مع التوقيت.
-                  4. 💰 تحليل التسعير: حدد فروق الأسعار، اعتراضات أجور اليد مقابل قطع الغيار، وسبب رفض العروض المبدئية.
-                """
-
-                # 3. إعداد العميل واستخدام آلية الكشف والمرونة المتعددة للنماذج (المرشحين)
-                client = genai.Client(api_key=api_key)
-
-                # قائمة مرشحين مرتبة من الأحدث للأقدم. جوجل بتلغي أسماء الموديلات بسرعة،
-                # فالكود بيكتشف تلقائياً أي موديل شغال فعلاً على حسابك بدل التقيد باسم واحد ثابت.
-                candidate_models = [
-                    "gemini-3.6-flash",
-                    "gemini-3.5-flash-lite",
-                    "gemini-3-pro",
-                    "gemini-2.5-flash",
-                    "gemini-2.5-flash-lite",
-                    "gemini-2.5-pro",
-                ]
-
-                def get_working_model():
-                    """يكتشف أول موديل متاح فعلياً على حساب المستخدم بدل الاعتماد
-                    على أسماء ثابتة قد تتوقف فجأة."""
-                    try:
-                        available = {m.name.split("/")[-1] for m in client.models.list()}
-                    except Exception:
-                        available = None
-
-                    if available:
-                        # 1) جرب المرشحين المعروفين بالترتيب
-                        for name in candidate_models:
-                            if name in available:
-                                return name
-                        # 2) لو مفيش أي مرشح موجود، هات أفضل موديل flash متاح (مش lite)
-                        flash_models = sorted(
-                            [n for n in available if "flash" in n and "lite" not in n],
-                            reverse=True
-                        )
-                        if flash_models:
-                            return flash_models[0]
-                        # 3) وإلا هات أي موديل flash حتى لو lite
-                        flash_any = sorted([n for n in available if "flash" in n], reverse=True)
-                        if flash_any:
-                            return flash_any[0]
-                        # 4) آخر حل: أي موديل pro متاح
-                        pro_models = sorted([n for n in available if "pro" in n], reverse=True)
-                        if pro_models:
-                            return pro_models[0]
-
-                    # لو فشل استدعاء list نفسه، ارجع لأول مرشح في القائمة
-                    return candidate_models[0]
-
-                model_name = get_working_model()
-                response = None
-                last_error = None
-
-                # جرب الموديل المكتشف، ولو فشل جرب باقي المرشحين واحد واحد
-                ordered_attempts = [model_name] + [m for m in candidate_models if m != model_name]
-
-                for name in ordered_attempts:
-                    try:
-                        response = client.models.generate_content(
-                            model=name,
-                            contents=prompt_text,
-                            config=types.GenerateContentConfig(
-                                temperature=0.3,
-                                top_p=0.9
-                            )
-                        )
-                        model_name = name
-                        break
-                    except Exception as e:
-                        last_error = e
-                        continue
-
-                if response is None:
-                    raise last_error if last_error else Exception("لا يوجد موديل متاح حالياً")
-
-                ai_text = response.text
-
-                if "===SPLIT===" in ai_text:
-                    parts = ai_text.split("===SPLIT===")
-                    justification = parts[0].strip() if len(parts) > 0 else ai_text
-                    details = parts[1].strip() if len(parts) > 1 else ""
-                else:
-                    justification = ai_text
-                    details = ""
-
-                st.session_state["audit_result"] = {
-                    "justification": justification,
-                    "evidence": details,
-                    "order_id": order_id
-                }
-                st.success(f"✅ تم الفحص والتحليل بنجاح! (الموديل المستخدم: {model_name})")
-
-            except Exception as e:
-                st.error(f"❌ حدث خطأ أثناء الاتصال بالذكاء الاصطناعي أو سحب البيانات: {str(e)}")
-
-# ==========================================
-# 6. عرض النتائج والتقارير
-# ==========================================
-with col_result:
+with col2:
     st.subheader("📊 مخرجات التقرير والتدقيق")
     
-    if "audit_result" in st.session_state and st.session_state["audit_result"]:
-        res = st.session_state["audit_result"]
+    if analyze_btn:
+        if not api_key_input:
+            st.error("⚠️ يرجى إدخال Gemini API Key أولاً من القائمة الجانبية.")
+        else:
+            with st.spinner("⏳ جاري الفحص الجنائي الرقمي لبيانات الطلب والتذاكر والمحادثات..."):
+                try:
+                    full_response = analyze_order_rating(api_key_input, order_id, sample_ratings)
+                    
+                    if "===SPLIT===" in full_response:
+                        justification, evidence = full_response.split("===SPLIT===", 1)
+                    else:
+                        justification = full_response
+                        evidence = "لم يتم تفكيك الأدلة بشكل منفصل."
+
+                    clean_justification = justification.strip()
+
+                    st.session_state['audit_result'] = {
+                        'justification': clean_justification,
+                        'evidence': evidence.strip(),
+                        'order_id': order_id,
+                    }
+
+                except Exception as e:
+                    st.error(f"❌ حدث خطأ أثناء التحليل: {str(e)}")
+
+    if 'audit_result' in st.session_state and st.session_state['audit_result']:
+        res = st.session_state['audit_result']
         
-        st.markdown("##### 📝 التبرير التشغيلي (جاهز للنسخ لمدير العمليات):")
+        st.markdown("### 📝 التبرير التشغيلي (جاهز للنسخ لمدير العمليات):")
         st.markdown(f'<div class="justification-card">{res["justification"]}</div>', unsafe_allow_html=True)
         
-        st.text_area("📋 حدد النص بالكامل للنسخ السريع (Ctrl+A -> Ctrl+C):", value=res["justification"], height=130)
+        st.text_area("📋 اضغط Ctrl+A ثم Ctrl+C للنسخ المباشر:", value=res["justification"], height=120)
 
-        st.markdown("##### 🔍 الأدلة والوقائع التفصيلية ومحطات الربط الزمني:")
+        st.markdown("### 🔍 الأدلة والوقائع التفصيلية ومحطات الربط الزمني:")
         st.markdown(f'<div class="evidence-card">{res["evidence"]}</div>', unsafe_allow_html=True)
-    else:
-        st.info("👈 قم بإدخال رقم الطلب والتقييمات، ثم اضغط على زر التحليل لتعرض النتائج هنا.")
+    elif not analyze_btn:
+        st.info("👈 قم بإدخال رقم الطلب والضغط على زر التحليل لعرض النتائج هنا.")
