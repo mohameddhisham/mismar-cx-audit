@@ -27,11 +27,11 @@ st.markdown(
     """
     <style>
 
-    @import url(
-        'https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800&display=swap'
-    );
+    @import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800&display=swap');
 
-    html, body, [class*="css"] {
+    html,
+    body,
+    [class*="css"] {
         font-family: 'Tajawal', sans-serif;
         direction: rtl;
         text-align: right;
@@ -42,16 +42,24 @@ st.markdown(
         color: #F3F4F6;
     }
 
+    /* ========================================================
+       HEADER
+       ======================================================== */
+
     .mismar-header {
         background: linear-gradient(
             135deg,
             #064E3B 0%,
             #0F172A 100%
         );
+
         padding: 28px;
         border-radius: 20px;
         border: 1px solid #10B98133;
-        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+
+        box-shadow:
+            0 10px 30px rgba(0, 0, 0, 0.5);
+
         margin-bottom: 28px;
         text-align: center;
     }
@@ -66,7 +74,12 @@ st.markdown(
     .mismar-header p {
         color: #9CA3AF;
         font-size: 1.05rem;
+        margin: 0;
     }
+
+    /* ========================================================
+       JUSTIFICATION CARD
+       ======================================================== */
 
     .justification-card {
         background: linear-gradient(
@@ -74,42 +87,78 @@ st.markdown(
             #111827 0%,
             #1F2937 100%
         );
+
         border-right: 6px solid #10B981;
+
         padding: 22px;
         border-radius: 14px;
+
         font-size: 1.15rem;
         line-height: 1.95;
-        color: #F9FAFB;
-        box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
-        margin-bottom: 16px;
-    }
 
-    .evidence-card {
-        background-color: #111827;
-        border: 1px solid #374151;
-        padding: 22px;
-        border-radius: 14px;
-        color: #D1D5DB;
-        line-height: 1.8;
-        white-space: pre-wrap;
+        color: #F9FAFB;
+
+        box-shadow:
+            0 4px 15px rgba(0, 0, 0, 0.2);
+
+        margin-bottom: 16px;
+
         direction: rtl;
         text-align: right;
     }
 
+    /* ========================================================
+       EVIDENCE CARD
+       ======================================================== */
+
+    .evidence-card {
+        background-color: #111827;
+
+        border: 1px solid #374151;
+
+        padding: 22px;
+        border-radius: 14px;
+
+        color: #D1D5DB;
+
+        line-height: 1.8;
+
+        white-space: pre-wrap;
+
+        direction: rtl;
+        text-align: right;
+
+        box-shadow:
+            0 4px 15px rgba(0, 0, 0, 0.15);
+    }
+
+    /* ========================================================
+       BUTTONS
+       ======================================================== */
+
     .stButton > button {
         width: 100%;
+
         background: linear-gradient(
             90deg,
             #10B981 0%,
             #059669 100%
         );
+
         color: #FFFFFF;
+
         font-weight: 700;
         font-size: 1.15rem;
+
         padding: 14px;
+
         border-radius: 12px;
+
         border: none;
-        box-shadow: 0 4px 14px rgba(16, 185, 129, 0.3);
+
+        box-shadow:
+            0 4px 14px rgba(16, 185, 129, 0.3);
+
         transition: all 0.3s ease;
     }
 
@@ -119,7 +168,26 @@ st.markdown(
             #059669 0%,
             #047857 100%
         );
+
         transform: translateY(-2px);
+    }
+
+    /* ========================================================
+       SIDEBAR
+       ======================================================== */
+
+    section[data-testid="stSidebar"] {
+        background-color: #0F172A;
+    }
+
+    /* ========================================================
+       INPUTS
+       ======================================================== */
+
+    input,
+    textarea {
+        direction: rtl !important;
+        text-align: right !important;
     }
 
     </style>
@@ -168,7 +236,7 @@ def fetch_order_data(order_id: int) -> dict[str, Any]:
     جلب بيانات الطلب من مصادر Metabase الأربعة.
     """
 
-    payload = {}
+    payload: dict[str, Any] = {}
 
     for key, url in METABASE_ENDPOINTS.items():
 
@@ -176,13 +244,16 @@ def fetch_order_data(order_id: int) -> dict[str, Any]:
 
             response = requests.get(
                 url,
-                params={"order_id": order_id},
+                params={
+                    "order_id": order_id
+                },
                 timeout=20,
             )
 
             if response.status_code == 200:
 
                 try:
+
                     payload[key] = response.json()
 
                 except ValueError:
@@ -201,7 +272,8 @@ def fetch_order_data(order_id: int) -> dict[str, Any]:
         except requests.Timeout:
 
             payload[key] = (
-                "Error: Request timed out while connecting to Metabase."
+                "Error: Request timed out while "
+                "connecting to Metabase."
             )
 
         except requests.RequestException as exc:
@@ -229,14 +301,16 @@ def build_audit_prompt(
     ratings: dict[str, int],
 ) -> str:
 
-    ratings_context = ""
-
     if ratings:
 
         ratings_context = (
             "تقييمات العميل المدخلة للطلب:\n"
             f"{json.dumps(ratings, ensure_ascii=False, indent=2)}\n"
         )
+
+    else:
+
+        ratings_context = ""
 
     tickets = json.dumps(
         order_data.get("tickets"),
@@ -262,7 +336,7 @@ def build_audit_prompt(
         indent=2,
     )
 
-    prompt = f"""
+    return f"""
 أنت كبير مدققي العمليات وتجربة العملاء
 (Senior Operations & CX Forensic Auditor)
 في شركة صيانة السيارات (مسمار - MisMar).
@@ -359,7 +433,7 @@ def build_audit_prompt(
 🎯 تعليمات وقواعد الصياغة الصارمة
 ==================================================
 
-قم بتقسيم إجابتك إلى قسمين يفصل بينهما السطر:
+قم بتقسيم الإجابة إلى قسمين يفصل بينهما السطر:
 
 ===SPLIT===
 
@@ -460,11 +534,9 @@ def build_audit_prompt(
 - جميع الاستنتاجات يجب أن تكون مبنية على البيانات المقدمة.
 """
 
-    return prompt
-
 
 # ============================================================
-# GROQ CLIENT
+# CREATE GROQ CLIENT
 # ============================================================
 
 def create_groq_client(api_key: str) -> Groq:
@@ -472,6 +544,7 @@ def create_groq_client(api_key: str) -> Groq:
     api_key = api_key.strip()
 
     if not api_key:
+
         raise ValueError(
             "Groq API Key غير موجود."
         )
@@ -490,7 +563,7 @@ def create_groq_client(api_key: str) -> Groq:
 
 
 # ============================================================
-# GROQ ANALYSIS
+# ANALYZE ORDER WITH GROQ
 # ============================================================
 
 def analyze_order_rating(
@@ -500,7 +573,7 @@ def analyze_order_rating(
 ) -> str:
 
     # --------------------------------------------------------
-    # Fetch order data
+    # Fetch data
     # --------------------------------------------------------
 
     order_data = fetch_order_data(
@@ -508,7 +581,7 @@ def analyze_order_rating(
     )
 
     # --------------------------------------------------------
-    # Build forensic audit prompt
+    # Build prompt
     # --------------------------------------------------------
 
     prompt = build_audit_prompt(
@@ -526,32 +599,35 @@ def analyze_order_rating(
     )
 
     # --------------------------------------------------------
-    # Groq model
+    # Model
     # --------------------------------------------------------
 
     model_name = "llama-3.3-70b-versatile"
 
     # --------------------------------------------------------
-    # Call Groq
+    # Groq API call
     # --------------------------------------------------------
 
     try:
 
         response = client.chat.completions.create(
+
             model=model_name,
 
             messages=[
                 {
                     "role": "system",
                     "content": (
-                        "أنت Senior Operations & CX Forensic Auditor. "
+                        "أنت خبير Senior Operations & "
+                        "CX Forensic Auditor. "
                         "حلل البيانات بدقة شديدة. "
                         "اعتمد فقط على البيانات المقدمة. "
                         "لا تخترع أي معلومات. "
-                        "احسب الفروقات الزمنية عندما تكون البيانات "
-                        "الزمنية متاحة."
+                        "احسب الفروقات الزمنية عندما "
+                        "تكون البيانات الزمنية متاحة."
                     ),
                 },
+
                 {
                     "role": "user",
                     "content": prompt,
@@ -567,12 +643,10 @@ def analyze_order_rating(
 
     except Exception as exc:
 
-        error_text = str(exc)
-
         raise Exception(
             f"خطأ في الاتصال بالذكاء الاصطناعي "
             f"عبر Groq ({model_name}):\n"
-            f"{error_text}"
+            f"{str(exc)}"
         )
 
     # --------------------------------------------------------
@@ -634,14 +708,13 @@ def test_groq_connection(
         )
 
         response = client.chat.completions.create(
+
             model="llama-3.3-70b-versatile",
 
             messages=[
                 {
                     "role": "user",
-                    "content": (
-                        "Reply with exactly: GROQ_OK"
-                    ),
+                    "content": "Reply with exactly: GROQ_OK",
                 }
             ],
 
@@ -694,7 +767,7 @@ with st.sidebar:
     )
 
     # --------------------------------------------------------
-    # Load Groq API key from Streamlit Secrets
+    # Read API key from Streamlit Secrets
     # --------------------------------------------------------
 
     try:
@@ -713,7 +786,7 @@ with st.sidebar:
     ).strip()
 
     # --------------------------------------------------------
-    # API Key Input
+    # Manual API key input
     # --------------------------------------------------------
 
     api_key_input = st.text_input(
@@ -733,7 +806,7 @@ with st.sidebar:
     api_key = api_key_input.strip()
 
     # --------------------------------------------------------
-    # Key status
+    # API key status
     # --------------------------------------------------------
 
     if api_key:
@@ -751,7 +824,7 @@ with st.sidebar:
         )
 
     # --------------------------------------------------------
-    # Test Groq
+    # Test API
     # --------------------------------------------------------
 
     if st.button(
@@ -801,7 +874,7 @@ with st.sidebar:
 
 
 # ============================================================
-# HEADER
+# MAIN HEADER
 # ============================================================
 
 st.markdown(
@@ -820,6 +893,7 @@ st.markdown(
 
     </div>
     """,
+
     unsafe_allow_html=True,
 )
 
@@ -835,7 +909,7 @@ col1, col2 = st.columns(
 
 
 # ============================================================
-# INPUT SECTION
+# INPUT COLUMN
 # ============================================================
 
 with col1:
@@ -899,12 +973,26 @@ with col1:
             5,
         )
 
+    # --------------------------------------------------------
+    # Ratings object
+    # --------------------------------------------------------
+
     sample_ratings = {
-        "الوقت": time_rating,
-        "السعر": price_rating,
-        "الجودة": quality_rating,
-        "خدمة العملاء": cs_rating,
-        "التقييم العام": overall_rating,
+
+        "الوقت":
+            time_rating,
+
+        "السعر":
+            price_rating,
+
+        "الجودة":
+            quality_rating,
+
+        "خدمة العملاء":
+            cs_rating,
+
+        "التقييم العام":
+            overall_rating,
     }
 
     st.markdown(
@@ -918,7 +1006,7 @@ with col1:
 
 
 # ============================================================
-# OUTPUT SECTION
+# OUTPUT COLUMN
 # ============================================================
 
 with col2:
@@ -928,7 +1016,7 @@ with col2:
     )
 
     # --------------------------------------------------------
-    # Start analysis
+    # Run analysis
     # --------------------------------------------------------
 
     if analyze_btn:
@@ -958,7 +1046,7 @@ with col2:
                     )
 
                     # ------------------------------------------------
-                    # Split AI response
+                    # Split response
                     # ------------------------------------------------
 
                     if "===SPLIT===" in full_response:
@@ -972,14 +1060,16 @@ with col2:
 
                     else:
 
-                        justification = full_response
+                        justification = (
+                            full_response
+                        )
 
                         evidence = (
                             "لم يتم تفكيك الأدلة بشكل منفصل."
                         )
 
                     # ------------------------------------------------
-                    # Clean result
+                    # Clean
                     # ------------------------------------------------
 
                     clean_justification = (
@@ -991,7 +1081,7 @@ with col2:
                     )
 
                     # ------------------------------------------------
-                    # Save result in session state
+                    # Store
                     # ------------------------------------------------
 
                     st.session_state[
@@ -1006,7 +1096,6 @@ with col2:
 
                         "order_id":
                             int(order_id),
-
                     }
 
                     st.success(
@@ -1016,7 +1105,8 @@ with col2:
                 except Exception as exc:
 
                     st.error(
-                        f"❌ حدث خطأ أثناء التحليل:\n\n{str(exc)}"
+                        f"❌ حدث خطأ أثناء التحليل:\n\n"
+                        f"{str(exc)}"
                     )
 
 
@@ -1026,9 +1116,7 @@ with col2:
 
     if (
         "audit_result" in st.session_state
-        and st.session_state[
-            "audit_result"
-        ]
+        and st.session_state["audit_result"]
     ):
 
         result = st.session_state[
@@ -1062,6 +1150,7 @@ with col2:
                 {safe_justification}
             </div>
             """,
+
             unsafe_allow_html=True,
         )
 
@@ -1092,6 +1181,7 @@ with col2:
                 {safe_evidence}
             </div>
             """,
+
             unsafe_allow_html=True,
         )
 
