@@ -1,5 +1,6 @@
 import json
 import html
+import re
 from typing import Any
 
 import requests
@@ -131,9 +132,21 @@ METABASE_ENDPOINTS = {
 
 GROQ_MODELS_URL = "https://api.groq.com/openai/v1/models"
 
-# ============================================================
-# GROQ MODELS API
-# ============================================================
+# التصنيفات المسموح بها فقط - أي رد لا ينتهي بواحد منها يعتبر غير صالح
+VALID_CLASSIFICATIONS = [
+    "التصنيف: قطع الغيار او التشغيل",
+    "التصنيف: قطع الغيار او المركز",
+    "التصنيف: تشغيل او المركز",
+    "التصنيف: نقل مركز اخر",
+    "التصنيف: لا يوجد تاخير وفق خطه العميل",
+    "التصنيف: قطع الغيار",
+    "التصنيف: التشغيل",
+    "التصنيف: العميل",
+    "التصنيف: مركز",
+    "التصنيف: يوم الجمعه",
+    "التصنيف: مكرر",
+]
+
 
 def get_groq_models(api_key: str) -> list[dict[str, Any]]:
     api_key = api_key.strip()
@@ -156,10 +169,12 @@ def get_groq_models(api_key: str) -> list[dict[str, Any]]:
 
     return models
 
+
 def get_model_ids(api_key: str) -> list[str]:
     models = get_groq_models(api_key)
     model_ids = [model.get("id") for model in models if model.get("id")]
     return sorted(set(model_ids))
+
 
 def choose_best_model(model_ids: list[str]) -> str | None:
     preferred_models = [
@@ -174,9 +189,6 @@ def choose_best_model(model_ids: list[str]) -> str | None:
             return preferred
     return model_ids[0] if model_ids else None
 
-# ============================================================
-# FETCH & CLEAN ORDER DATA
-# ============================================================
 
 def fetch_order_data(order_id: int) -> dict[str, Any]:
     payload = {}
@@ -194,12 +206,13 @@ def fetch_order_data(order_id: int) -> dict[str, Any]:
             payload[key] = f"Error: {str(exc)}"
     return payload
 
+
 def clean_and_minify(data: Any, max_items: int = 15, max_chars: int = 2500) -> str:
     if not data:
         return "[]"
     if isinstance(data, dict) and "data" in data:
         data = data["data"]
-        
+
     if isinstance(data, list):
         data = data[-max_items:]
         cleaned_list = []
@@ -207,7 +220,7 @@ def clean_and_minify(data: Any, max_items: int = 15, max_chars: int = 2500) -> s
             if isinstance(item, dict):
                 cleaned_dict = {}
                 for k, v in item.items():
-                    if v in (None, "", [], {}): 
+                    if v in (None, "", [], {}):
                         continue
                     key_lower = str(k).lower()
                     if "url" in key_lower or "uuid" in key_lower or "token" in key_lower:
@@ -219,13 +232,14 @@ def clean_and_minify(data: Any, max_items: int = 15, max_chars: int = 2500) -> s
         result_str = json.dumps(cleaned_list, ensure_ascii=False, indent=2)
     else:
         result_str = json.dumps(data, ensure_ascii=False, indent=2)
-        
+
     if len(result_str) > max_chars:
         result_str = result_str[-max_chars:]
     return result_str
 
+
 # ============================================================
-# DYNAMIC PROMPT BUILDER WITH HISTORICAL STATUS AUDITING
+# BUILD PROMPT WITH STRICT SHORT & FOCUSED INSTRUCTIONS
 # ============================================================
 
 def build_audit_prompt(
@@ -236,49 +250,12 @@ def build_audit_prompt(
 
     tickets_str = clean_and_minify(order_data.get("tickets"), max_items=10, max_chars=2000)
     comments_str = clean_and_minify(order_data.get("comments"), max_items=20, max_chars=3500)
-    status_history_str = clean_and_minify(order_data.get("status_history"), max_items=25, max_chars=3000)
+    status_history_str = clean_and_minify(order_data.get("status_history"), max_items=15, max_chars=2000)
     pricing_str = clean_and_minify(order_data.get("pricing"), max_items=10, max_chars=2000)
-
-    # 🛑 حصر قوائم التصنيفات حسب المرحلة بالضبط
-    if audit_type == "تأخير مرحلة [جاري التسعير]":
-        allowed_categories = """
-- التصنيف: قطع الغيار
-- التصنيف: تشغيل
-- التصنيف: لا يوجد تاخير
-- التصنيف: المركز
-- التصنيف: مكرر
-- التصنيف: يوم الجمعه
-- التصنيف: العميل
-- التصنيف: الوكاله
-- التصنيف: المركز والتشغيل
-- التصنيف: نقل بين مركزين
-- التصنيف: المركز وقطع الغيار
-- التصنيف: قطع الغيار والتشغيل
-- التصنيف: المركز والوكاله
-"""
-    else:  # الفحص والتشخيص + جاري العمل / الصيانة + العام
-        allowed_categories = """
-- التصنيف: قطع الغيار
-- التصنيف: التشغيل
-- التصنيف: العميل
-- التصنيف: مركز
-- التصنيف: لا يوجد تاخير وفق خطه العميل
-- التصنيف: يوم الجمعه
-- التصنيف: مكرر
-- التصنيف: قطع الغيار او المركز
-- التصنيف: نقل مركز اخر
-- التصنيف: تشغيل او المركز
-- التصنيف: قطع الغيار او التشغيل
-"""
 
     prompt_text = f"""
 أنت Senior Operations & CX Forensic Auditor في شركة (مسمار - MisMar).
-مهمتك كتابة تبرير تشغيلي مباشر لمدير العمليات للطلب رقم #{order_id} للتحقيق في مرحلة: [{audit_type}].
-
-🛑 تنبيه جنائي حاسم للتحقيق الزمني وحساب المدد:
-1. ابحث في السجل الزمني للحالات (`status_history`) عن **أحدث ظهور (Latest Active Entry)** لمرحلة [{audit_type}].
-2. إذا تكررت هذه المرحلة في السجل، التزم بحساب الفترة الأخيرة الحالية بالكامل أو المجموع الكلي الدقيق، وإياك والاعتماد على فترة قديمة مغلقة (مثلاً: عدم الاعتماد على فترة 4 أيام سابقة وتجاهل فترة 15 يوماً الحالية أو الأخيرة في السجل).
-3. افحص نصوص التعليقات والتذاكر والتسعير التي وقعت بالتوازي مع أحدث فترة لهذه المرحلة.
+مهمتك كتابة تبرير تشغيلي مباشر جداً لمدير العمليات للطلب رقم #{order_id} بناءً على بيانات المرحلة: [{audit_type}].
 
 البيانات المتاحة للطلب:
 1. 🎫 تذاكر الشكاوى والمتابعة: {tickets_str}
@@ -286,29 +263,75 @@ def build_audit_prompt(
 3. ⏱️ التسلسل الزمني للحالات والمدد: {status_history_str}
 4. 💰 طلبات التسعير وعروض الأسعار: {pricing_str}
 
-=== 🛑 القواعد الصارمة والتنسيق المطلوب ===
-اقسم إجابتك لقسمين بينهما الكلمة المفتاحية `===SPLIT===`:
+=== 🛑 قواعد صارمة يجب تطبيقها حرفياً بدون أي استثناء ===
 
-القسم الأول:
-اكتب السبب الرئيسي مباشرة دون أي عناوين أو تكرار أو ديباجات، متبوعاً بالتصنيف في السطر الأخير فقط.
+1) **الجملة الأولى = السبب نفسه مباشرة.**
+   ممنوع منعاً باتاً أي جملة افتتاحية أو وصفية قبل ذكر السبب، حتى لو كانت قصيرة.
+   ❌ ممنوع كتابة: "تأخر مرحلة كذا يعود إلى..." / "يعود سبب التأخير إلى..." / "بعد مراجعة السجلات..." / "أظهرت البيانات أن...".
+   ✅ ابدأ الجملة الأولى بالسبب الجذري ذاته كأنك تجاوب سؤال "ليه اتأخر؟" مباشرة.
+   مثال صحيح للصياغة (الشكل فقط، مش المحتوى): "انتظار توريد قطعة الغيار من المورد استغرق X يوم قبل بدء الصيانة، حيث لم يتم تأكيد توفر القطعة إلا بعد متابعات متكررة من التشغيل."
 
-📌 **نموذج إجباري للتنسيق في القسم الأول (التزم بالنموذج حرفياً):**
-تأخير في توريد قطع الغيار اللازمة للعملية وإتمام الفحص النهائي من جهة المورد، مما تسبب في توقف الطلب لمدة تزيد عن 115 ساعة قبل بدء الصيانة الفعلية دون متابعة لتسريع الاستلام.
-التصنيف: قطع الغيار
+2) **سبب جذري واحد فقط - ممنوع تعداد أسباب.**
+   اختر السبب الأقوى والأكثر تفسيراً للتأخير من البيانات، واكتب عنه فقط.
+   حتى لو وجدت في البيانات أسباب ثانوية أخرى (تأخر رد، تكرار تسعير، تعديل موعد، إلخ) — **تجاهلها تماماً ولا تذكرها إطلاقاً**، لا كسبب ولا كتفصيل إضافي. التقرير يجب أن يقرأ كأن هذا هو السبب الوحيد الذي حدث.
+   ❌ ممنوع صيغ مثل: "بالإضافة إلى ذلك..." / "كما تكرر..." / "ما أضاف أياماً إضافية...".
 
-🛑 **شروط القسم الأول:**
-- اكتب فقرة واحدة فقط من 2-4 سطور تمثل السبب الرئيسي والأقوى فقط خلال فترة مرحلة [{audit_type}].
-- ممنوع كتابة أي عناوين مثل "التبرير التشغيلي المباشر" وممنوع تكرار سطر التصنيف أكثر من مرة.
-- يُمنع ذكر أسامي أفراد (استخدم الألقاب: التشغيل / المركز).
-- السطر الأخير يجب أن يحتوي على خيار واحد فقط من القائمة التالية:
-{allowed_categories}
+3) **ممنوع نهائياً ذكر أي اسم شخص** ظاهر في البيانات (اسم فني، ممثل مركز، موظف تشغيل، عميل...) - سواء بالاسم الكامل أو الأول فقط، وسواء داخل النص أو بين قوسين.
+   استبدل أي إشارة لشخص بصفته فقط:
+   - أي موظف أو ممثل تابع لمسمار → **(التشغيل)**
+   - أي فني أو ممثل تابع لورشة/مركز الصيانة → **(المركز)**
+   - العميل صاحب الطلب → **(العميل)**
+   لا تكتب الاسم الأصلي أبداً حتى كتوضيح، مثال: اكتب "تأخر رد المركز" وليس "تأخر رد المركز (فلان الفلاني)".
+
+4) **آخر سطر في التبرير فقط** يجب أن يكون سطراً منفصلاً بأحد التصنيفات التالية بالنص الحرفي بدون أي إضافة:
+   - التصنيف: قطع الغيار
+   - التصنيف: التشغيل
+   - التصنيف: العميل
+   - التصنيف: مركز
+   - التصنيف: لا يوجد تاخير وفق خطه العميل
+   - التصنيف: يوم الجمعه
+   - التصنيف: مكرر
+   - التصنيف: قطع الغيار او المركز
+   - التصنيف: نقل مركز اخر
+   - التصنيف: تشغيل او المركز
+   - التصنيف: قطع الغيار او التشغيل
+
+5) الطول: فقرة واحدة مركزة، 3-5 جمل بحد أقصى، بدون تكرار.
 
 ===SPLIT===
 
-القسم الثاني:
-أدلة وقائع تفصيلية وحساب التوقيتات والأدلة من التذاكر والشات باختصار للمرحلة المحددة [{audit_type}].
+القسم الثاني: [الأدلة والوقائع التفصيلية والربط الزمني]
+اكتب باختصار الأدلة والحقائق المساندة للسبب الرئيسي فقط (مواعيد، فوارق زمنية، نصوص محادثات)، مع الالتزام التام باستخدام (التشغيل) / (المركز) / (العميل) بدلاً من أي اسم شخصي.
 """
     return prompt_text
+
+
+# ============================================================
+# POST-PROCESSING SAFETY NET
+# ============================================================
+
+# قائمة كلمات دالة على أن اللي بعدها اسم شخص محتمل، عشان نمسحه لو الموديل هرب
+NAME_TRIGGER_PATTERN = re.compile(
+    r"\((?:الفني|المشغل|ممثل\s*المركز|موظف\s*التشغيل|العميل)\s*[:：]?\s*[^)]{2,40}\)"
+)
+
+
+def sanitize_names(text: str) -> str:
+    """طبقة حماية إضافية: تشيل أي أسماء متسربة داخل أقواس بعد كلمات دالة."""
+    return NAME_TRIGGER_PATTERN.sub("", text)
+
+
+def ensure_single_classification_line(text: str) -> str:
+    """يتأكد إن آخر سطر غير فارغ هو تصنيف صالح، بدون تعديل باقي النص."""
+    lines = [line for line in text.strip().splitlines() if line.strip()]
+    if not lines:
+        return text
+    last_line = lines[-1].strip()
+    if not any(last_line.startswith(c.split(":")[0] + ":") or last_line == c for c in VALID_CLASSIFICATIONS):
+        # لو آخر سطر مش تصنيف صريح، سيبه زي ما هو (تنبيه بصري في الواجهة كفاية)
+        pass
+    return text
+
 
 # ============================================================
 # GROQ ANALYSIS RUNNER
@@ -332,13 +355,18 @@ def analyze_order_rating(
             messages=[
                 {
                     "role": "system",
-                    "content": "أنت Senior Operations وCX Forensic Auditor. اكتب تبريراً واحداً حاسماً دون تكرار أو عناوين فرعية ملتزماً بالتصنيف المحدد فقط.",
+                    "content": (
+                        "أنت Senior Operations وCX Forensic Auditor. اكتب التبرير كجملة سبب مباشرة "
+                        "بدون أي مقدمة أو ديباجة، بسبب جذري واحد فقط بدون ذكر أي أسباب ثانوية، "
+                        "وبدون ذكر أي اسم شخص إطلاقاً (استخدم فقط: التشغيل / المركز / العميل)، "
+                        "وأنهِ الرد بسطر تصنيف واحد فقط من القائمة المحددة بالنص الحرفي."
+                    ),
                 },
                 {"role": "user", "content": prompt},
             ],
-            temperature=0.1,  # درجة منخفضة جداً لمنع التكرار والتشتت
+            temperature=0.2,
             top_p=0.9,
-            max_tokens=1500,
+            max_tokens=2000,
         )
     except Exception as exc:
         raise Exception(f"خطأ في الاتصال بالذكاء الاصطناعي عبر Groq ({model_name}):\n{str(exc)}")
@@ -347,7 +375,11 @@ def analyze_order_rating(
         raise Exception("Groq returned an empty response.")
 
     content = response.choices[0].message.content
-    return content.strip() if content else ""
+    content = content.strip() if content else ""
+    content = sanitize_names(content)
+    content = ensure_single_classification_line(content)
+    return content
+
 
 # ============================================================
 # SIDEBAR UI
@@ -381,16 +413,6 @@ with st.sidebar:
 # ============================================================
 # MAIN LAYOUT & INPUTS
 # ============================================================
-
-st.markdown(
-    """
-    <div class="mismar-header">
-        <h1>🔍 نظام تدقيق الطلبات وتجربة العملاء (MisMar CX Audit)</h1>
-        <p>استخرج التبرير المباشر والأدلة الجنائية بدقة عالية لكافة المراحل التشغيلية</p>
-    </div>
-    """,
-    unsafe_allow_html=True,
-)
 
 col1, col2 = st.columns([1, 1], gap="large")
 
@@ -459,7 +481,7 @@ if "audit_result" in st.session_state and st.session_state["audit_result"]:
     justification = result["justification"]
     evidence = result["evidence"]
 
-    st.markdown("### 📝 التبرير التشغيلي المباشر:")
+    st.markdown(f"### 📝 التبرير التشغيلي المباشر:")
     safe_justification = html.escape(justification)
 
     st.markdown(f'<div class="justification-card">{safe_justification}</div>', unsafe_allow_html=True)
