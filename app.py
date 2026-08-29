@@ -409,6 +409,12 @@ def analyze_order_rating(
     max_chars = 40000
     output_tokens = 6000
 
+    # موديلات reasoning زي openai/gpt-oss-* بتستهلك جزء كبير من max_tokens في
+    # "تفكير داخلي" قبل كتابة الإجابة، فلو الميزانية صغيرة (بعد تقليلها بسبب TPM)
+    # ممكن يخلص التفكير الداخلي ويسيب صفر توكنز للإجابة الفعلية = رد فاضي.
+    # نقلل جهد التفكير لأقل درجة عشان نضمن إن أغلب الميزانية تروح للمحتوى نفسه.
+    is_reasoning_model = "gpt-oss" in model_name.lower() or "reasoning" in model_name.lower()
+
     last_error: Exception | None = None
     max_attempts = 5
 
@@ -427,6 +433,9 @@ def analyze_order_rating(
             top_p=0.9,
             max_tokens=output_tokens,
         )
+        if is_reasoning_model:
+            # جهد تفكير منخفض = توكنز أكتر متاحة فعلياً لكتابة الإجابة بدل ما تتاكل في التفكير الداخلي
+            request_kwargs["reasoning_effort"] = "low"
 
         try:
             try:
@@ -440,6 +449,14 @@ def analyze_order_rating(
                 raise Exception("Groq returned an empty response.")
 
             raw_content = response.choices[0].message.content or ""
+
+            if not raw_content.strip():
+                finish_reason = getattr(response.choices[0], "finish_reason", "") or ""
+                raise Exception(
+                    f"EMPTY_CONTENT: الرد رجع فاضي (finish_reason={finish_reason}) - "
+                    f"غالباً الموديل استهلك كل الميزانية في التفكير الداخلي."
+                )
+
             parsed = extract_json_object(raw_content)
 
             justification = sanitize_names(str(parsed.get("justification", "")).strip())
@@ -473,9 +490,19 @@ def analyze_order_rating(
                 output_tokens = max(int(output_tokens * scale), 500)
                 continue
 
-            # مش خطأ TPM قابل للتصحيح تلقائيًا، أو خلصنا المحاولات
+            if error_text.startswith("EMPTY_CONTENT") and attempt < max_attempts:
+                # المشكلة عكسية هنا: الميزانية اتاكلت في التفكير الداخلي.
+                # نقلل حجم بيانات الإدخال (يفضّي مساحة أكبر ضمن نفس سقف TPM)
+                # وكمان لو reasoning_effort لسه مش "low" (فشلت أول مرة قبل ما نضيفها) نفعّلها.
+                max_chars = max(int(max_chars * 0.6), 800)
+                max_items = max(int(max_items * 0.6), 5)
+                is_reasoning_model = True
+                continue
+
+            # مش خطأ قابل للتصحيح تلقائيًا، أو خلصنا المحاولات
+            clean_error_text = error_text.replace("EMPTY_CONTENT: ", "")
             raise Exception(
-                f"خطأ في الاتصال بالذكاء الاصطناعي عبر Groq ({model_name}):\n{error_text}"
+                f"خطأ في الاتصال بالذكاء الاصطناعي عبر Groq ({model_name}):\n{clean_error_text}"
             )
 
     raise Exception(f"فشل التحليل بعد {max_attempts} محاولات.\n\nآخر خطأ:\n{last_error}")
