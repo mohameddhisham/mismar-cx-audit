@@ -252,12 +252,14 @@ def build_audit_prompt(
     order_id: int,
     order_data: dict[str, Any],
     audit_type: str,
+    max_items: int = 200,
+    max_chars: int = 40000,
 ) -> str:
 
-    tickets_str = clean_and_minify(order_data.get("tickets"))
-    comments_str = clean_and_minify(order_data.get("comments"))
-    status_history_str = clean_and_minify(order_data.get("status_history"))
-    pricing_str = clean_and_minify(order_data.get("pricing"))
+    tickets_str = clean_and_minify(order_data.get("tickets"), max_items=max_items, max_chars=max_chars)
+    comments_str = clean_and_minify(order_data.get("comments"), max_items=max_items, max_chars=max_chars)
+    status_history_str = clean_and_minify(order_data.get("status_history"), max_items=max_items, max_chars=max_chars)
+    pricing_str = clean_and_minify(order_data.get("pricing"), max_items=max_items, max_chars=max_chars)
 
     classifications_list = "\n".join(f"   - {c}" for c in VALID_CLASSIFICATIONS)
 
@@ -360,6 +362,14 @@ def extract_json_object(raw_text: str) -> dict[str, Any]:
     raise ValueError(f"رد الموديل لا يحتوي على JSON:\n\n{raw_text[:800]}")
 
 
+def parse_tpm_rate_limit_error(error_text: str) -> tuple[int, int] | None:
+    """يقرأ 'Limit 8000, Requested 24848' من رسالة خطأ Groq ويرجّعهم كأرقام."""
+    match = re.search(r"Limit\s+(\d+),\s*Requested\s+(\d+)", error_text, re.IGNORECASE)
+    if match:
+        return int(match.group(1)), int(match.group(2))
+    return None
+
+
 def normalize_classification(classification: str) -> str:
     """يتأكد إن التصنيف من ضمن القائمة المسموحة، وإلا يرجّع القيمة الخام مع تحذير."""
     classification = (classification or "").strip()
@@ -381,8 +391,6 @@ def analyze_order_rating(
 ) -> dict[str, str]:
 
     order_data = fetch_order_data(order_id)
-    prompt = build_audit_prompt(order_id, order_data, audit_type)
-
     client = Groq(api_key=api_key.strip())
 
     system_message = (
@@ -395,59 +403,82 @@ def analyze_order_rating(
         "بدون أي نص أو Markdown حول الـ JSON."
     )
 
-    request_kwargs = dict(
-        model=model_name,
-        messages=[
-            {"role": "system", "content": system_message},
-            {"role": "user", "content": prompt},
-        ],
-        temperature=0.2,
-        top_p=0.9,
-        max_tokens=6000,
-    )
+    # نبدأ بالحجم الكامل، ولو الحساب على Groq عنده سقف TPM أقل من اللي محتاجينه لموديل معين،
+    # هنقرأ الرقم الحقيقي من رسالة الخطأ ونحسب بالظبط قد إيه نقلل، بدل رقم عشوائي ثابت.
+    max_items = 200
+    max_chars = 40000
+    output_tokens = 6000
 
-    try:
-        # نحاول نجبر JSON mode لو الموديل بيدعمها (بيقلل جداً فرصة كسر الفورمات)
-        response = client.chat.completions.create(
-            response_format={"type": "json_object"}, **request_kwargs
+    last_error: Exception | None = None
+    max_attempts = 5
+
+    for attempt in range(1, max_attempts + 1):
+        prompt = build_audit_prompt(
+            order_id, order_data, audit_type, max_items=max_items, max_chars=max_chars
         )
-    except Exception:
+
+        request_kwargs = dict(
+            model=model_name,
+            messages=[
+                {"role": "system", "content": system_message},
+                {"role": "user", "content": prompt},
+            ],
+            temperature=0.2,
+            top_p=0.9,
+            max_tokens=output_tokens,
+        )
+
         try:
-            response = client.chat.completions.create(**request_kwargs)
-        except Exception as first_exc:
-            # لو الفشل بسبب تجاوز حدود السياق/التوكنز (شائع مع الموديلات الأصغر)،
-            # نقلل max_tokens ونحاول تاني بدل ما نفشل كليًا ونخسر كل التحليل
-            error_text = str(first_exc).lower()
-            if "context" in error_text or "token" in error_text or "too large" in error_text or "length" in error_text:
-                reduced_kwargs = dict(request_kwargs)
-                reduced_kwargs["max_tokens"] = 3000
-                try:
-                    response = client.chat.completions.create(**reduced_kwargs)
-                except Exception as second_exc:
-                    raise Exception(
-                        f"خطأ في الاتصال بالذكاء الاصطناعي عبر Groq ({model_name}) حتى بعد تقليل الحجم:\n{str(second_exc)}"
-                    )
-            else:
-                raise Exception(f"خطأ في الاتصال بالذكاء الاصطناعي عبر Groq ({model_name}):\n{str(first_exc)}")
+            try:
+                response = client.chat.completions.create(
+                    response_format={"type": "json_object"}, **request_kwargs
+                )
+            except Exception:
+                response = client.chat.completions.create(**request_kwargs)
 
-    if not response or not response.choices:
-        raise Exception("Groq returned an empty response.")
+            if not response or not response.choices:
+                raise Exception("Groq returned an empty response.")
 
-    raw_content = response.choices[0].message.content or ""
-    parsed = extract_json_object(raw_content)
+            raw_content = response.choices[0].message.content or ""
+            parsed = extract_json_object(raw_content)
 
-    justification = sanitize_names(str(parsed.get("justification", "")).strip())
-    evidence = sanitize_names(str(parsed.get("evidence", "")).strip())
-    classification = normalize_classification(str(parsed.get("classification", "")))
+            justification = sanitize_names(str(parsed.get("justification", "")).strip())
+            evidence = sanitize_names(str(parsed.get("evidence", "")).strip())
+            classification = normalize_classification(str(parsed.get("classification", "")))
 
-    if not justification:
-        raise Exception(f"رد الموديل لا يحتوي على حقل justification صالح.\n\nالرد الخام:\n{raw_content[:800]}")
+            if not justification:
+                raise Exception(f"رد الموديل لا يحتوي على حقل justification صالح.\n\nالرد الخام:\n{raw_content[:800]}")
 
-    return {
-        "justification": justification,
-        "evidence": evidence if evidence else "لا توجد أدلة تفصيلية إضافية.",
-        "classification": classification,
-    }
+            return {
+                "justification": justification,
+                "evidence": evidence if evidence else "لا توجد أدلة تفصيلية إضافية.",
+                "classification": classification,
+            }
+
+        except Exception as exc:
+            last_error = exc
+            error_text = str(exc)
+            rate_limit_info = parse_tpm_rate_limit_error(error_text)
+
+            if rate_limit_info and attempt < max_attempts:
+                limit_tokens, requested_tokens = rate_limit_info
+                # هامش أمان 15% تحت الحد المسموح فعليًا
+                safety_margin = 0.85
+                scale = (limit_tokens * safety_margin) / requested_tokens
+
+                # نقلل حجم البيانات (max_chars/max_items) وعدد التوكنز المطلوبة للمخرجات
+                # بنفس النسبة المطلوبة فعليًا، بدل تخمين عشوائي
+                max_chars = max(int(max_chars * scale), 800)
+                max_items = max(int(max_items * scale), 5)
+                output_tokens = max(int(output_tokens * scale), 500)
+                continue
+
+            # مش خطأ TPM قابل للتصحيح تلقائيًا، أو خلصنا المحاولات
+            raise Exception(
+                f"خطأ في الاتصال بالذكاء الاصطناعي عبر Groq ({model_name}):\n{error_text}"
+            )
+
+    raise Exception(f"فشل التحليل بعد {max_attempts} محاولات.\n\nآخر خطأ:\n{last_error}")
 
 
 # ============================================================
