@@ -236,7 +236,7 @@ def build_audit_prompt(
 
     tickets_str = clean_and_minify(order_data.get("tickets"), max_items=10, max_chars=2000)
     comments_str = clean_and_minify(order_data.get("comments"), max_items=20, max_chars=3500)
-    status_history_str = clean_and_minify(order_data.get("status_history"), max_items=15, max_chars=2000)
+    status_history_str = clean_and_minify(order_data.get("status_history"), max_items=25, max_chars=3000)
     pricing_str = clean_and_minify(order_data.get("pricing"), max_items=10, max_chars=2000)
 
     # 🛑 حصر قوائم التصنيفات حسب المرحلة بالضبط
@@ -275,9 +275,10 @@ def build_audit_prompt(
 أنت Senior Operations & CX Forensic Auditor في شركة (مسمار - MisMar).
 مهمتك كتابة تبرير تشغيلي مباشر لمدير العمليات للطلب رقم #{order_id} للتحقيق في مرحلة: [{audit_type}].
 
-🛑 تنبيه جنائي حاسم للتحقيق الزمني:
-قد يكون الطلب حالياً مكتملاً أو في حالة سابقة/لاحقة (مثلاً: تم التسليم)، ولكن المراجعة استقصائية وموجهة حصراً لمرحلة [{audit_type}].
-ابحث في السجل الزمني للحالات (`status_history`) عن **أحدث/أطول فترة** كان فيها الطلب في هذه المرحلة بالذات [{audit_type}]، واربط التعليقات والتذاكر والتسعير التي وقعت داخل النطاق الزمني لهذه المرحلة خصيصاً.
+🛑 تنبيه جنائي حاسم للتحقيق الزمني وحساب المدد:
+1. ابحث في السجل الزمني للحالات (`status_history`) عن **أحدث ظهور (Latest Active Entry)** لمرحلة [{audit_type}].
+2. إذا تكررت هذه المرحلة في السجل، التزم بحساب الفترة الأخيرة الحالية بالكامل أو المجموع الكلي الدقيق، وإياك والاعتماد على فترة قديمة مغلقة (مثلاً: عدم الاعتماد على فترة 4 أيام سابقة وتجاهل فترة 15 يوماً الحالية أو الأخيرة في السجل).
+3. افحص نصوص التعليقات والتذاكر والتسعير التي وقعت بالتوازي مع أحدث فترة لهذه المرحلة.
 
 البيانات المتاحة للطلب:
 1. 🎫 تذاكر الشكاوى والمتابعة: {tickets_str}
