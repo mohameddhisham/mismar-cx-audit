@@ -207,7 +207,12 @@ def fetch_order_data(order_id: int) -> dict[str, Any]:
     return payload
 
 
-def clean_and_minify(data: Any, max_items: int = 15, max_chars: int = 2500) -> str:
+def clean_and_minify(data: Any, max_items: int = 200, max_chars: int = 40000) -> str:
+    """
+    بتنضّف البيانات من الحقول الفاضية والحساسة (روابط/tokens) بس من غير ما تقص محتوى فعلي
+    إلا لو البيانات ضخمة بشكل غير طبيعي (max_items/max_chars هنا حدود أمان قصوى بس،
+    مش حدود تشغيلية عادية) عشان منوصلش لسقف الموديل أو نبعت ميجابايتات من الداتا القديمة اللي مالهاش لازمة.
+    """
     if not data:
         return "[]"
     if isinstance(data, dict) and "data" in data:
@@ -234,6 +239,7 @@ def clean_and_minify(data: Any, max_items: int = 15, max_chars: int = 2500) -> s
         result_str = json.dumps(data, ensure_ascii=False, indent=2)
 
     if len(result_str) > max_chars:
+        # لو فعلاً تعدى الحد الأقصى (نادر)، بناخد آخر جزء لأنه غالباً الأحدث والأهم للتأخير الحالي
         result_str = result_str[-max_chars:]
     return result_str
 
@@ -248,10 +254,10 @@ def build_audit_prompt(
     audit_type: str,
 ) -> str:
 
-    tickets_str = clean_and_minify(order_data.get("tickets"), max_items=10, max_chars=2000)
-    comments_str = clean_and_minify(order_data.get("comments"), max_items=20, max_chars=3500)
-    status_history_str = clean_and_minify(order_data.get("status_history"), max_items=15, max_chars=2000)
-    pricing_str = clean_and_minify(order_data.get("pricing"), max_items=10, max_chars=2000)
+    tickets_str = clean_and_minify(order_data.get("tickets"))
+    comments_str = clean_and_minify(order_data.get("comments"))
+    status_history_str = clean_and_minify(order_data.get("status_history"))
+    pricing_str = clean_and_minify(order_data.get("pricing"))
 
     classifications_list = "\n".join(f"   - {c}" for c in VALID_CLASSIFICATIONS)
 
@@ -288,9 +294,17 @@ def build_audit_prompt(
 4) **حقل التصنيف** يجب أن يكون واحداً فقط بالنص الحرفي من هذه القائمة بالضبط (بدون أي تعديل أو إضافة):
 {classifications_list}
 
-5) الطول: فقرة واحدة مركزة للتبرير، 3-5 جمل بحد أقصى، بدون تكرار.
+5) الطول: فقرة واحدة مركزة للتبرير (justification)، 3-5 جمل بحد أقصى، بدون تكرار.
 
-6) الأدلة: فقرة موجزة منفصلة تدعم السبب الرئيسي فقط (مواعيد، فوارق زمنية، نصوص محادثات)، بنفس قواعد منع الأسماء.
+6) **الأدلة (evidence) - يجب أن تكون تفصيلية وليست ملخصاً مختصراً:**
+   اكتب سرداً زمنياً كاملاً للوقائع التي تدعم السبب الرئيسي فقط، متضمناً:
+   - كل حدث/رسالة/تغيير حالة له علاقة بالسبب الرئيسي بترتيبه الزمني.
+   - التواريخ والأوقات والفوارق الزمنية بينها بالساعات/الأيام كلما توفرت في البيانات.
+   - إشارات مباشرة لمحتوى المحادثات أو التذاكر ذات الصلة (بصياغتك، مع استبدال أي اسم بـ (التشغيل)/(المركز)/(العميل)).
+   - لا تكتفِ بجملة واحدة عامة؛ استهدف 6-10 جمل أو نقاط على الأقل تغطي كامل الخط الزمني للسبب من بدايته حتى انتهائه أو حتى نهاية المرحلة.
+   ❌ ممنوع إخراج الأدلة كملخص من سطر أو سطرين. لو البيانات فيها تفاصيل كافية، لازم تظهر كاملة هنا.
+
+7) الطول: فقرة التبرير (justification) قصيرة ومركزة (3-5 جمل)، أما الأدلة (evidence) فتفصيلية وأطول بكثير من التبرير.
 
 === 📤 صيغة الإخراج (إلزامية) ===
 أعد الرد **بصيغة JSON صالحة فقط**، بدون أي نص قبله أو بعده، بدون Markdown، بدون علامات ```، بالشكل التالي بالضبط:
@@ -372,9 +386,11 @@ def analyze_order_rating(
     client = Groq(api_key=api_key.strip())
 
     system_message = (
-        "أنت Senior Operations وCX Forensic Auditor. اكتب التبرير كجملة سبب مباشرة "
+        "أنت Senior Operations وCX Forensic Auditor. اكتب حقل justification كجملة سبب مباشرة "
         "بدون أي مقدمة أو ديباجة، بسبب جذري واحد فقط بدون ذكر أي أسباب ثانوية، "
         "وبدون ذكر أي اسم شخص إطلاقاً (استخدم فقط: التشغيل / المركز / العميل). "
+        "اكتب حقل evidence بشكل تفصيلي وطويل نسبياً يغطي كامل الخط الزمني للسبب "
+        "(تواريخ، فوارق زمنية، مضمون محادثات وتذاكر ذات صلة) - ممنوع تلخيصه في سطر أو سطرين. "
         "يجب أن يكون ردك بالكامل عبارة عن JSON صالح فقط بالحقول justification و evidence و classification، "
         "بدون أي نص أو Markdown حول الـ JSON."
     )
@@ -387,7 +403,7 @@ def analyze_order_rating(
         ],
         temperature=0.2,
         top_p=0.9,
-        max_tokens=2000,
+        max_tokens=6000,
     )
 
     try:
@@ -398,8 +414,21 @@ def analyze_order_rating(
     except Exception:
         try:
             response = client.chat.completions.create(**request_kwargs)
-        except Exception as exc:
-            raise Exception(f"خطأ في الاتصال بالذكاء الاصطناعي عبر Groq ({model_name}):\n{str(exc)}")
+        except Exception as first_exc:
+            # لو الفشل بسبب تجاوز حدود السياق/التوكنز (شائع مع الموديلات الأصغر)،
+            # نقلل max_tokens ونحاول تاني بدل ما نفشل كليًا ونخسر كل التحليل
+            error_text = str(first_exc).lower()
+            if "context" in error_text or "token" in error_text or "too large" in error_text or "length" in error_text:
+                reduced_kwargs = dict(request_kwargs)
+                reduced_kwargs["max_tokens"] = 3000
+                try:
+                    response = client.chat.completions.create(**reduced_kwargs)
+                except Exception as second_exc:
+                    raise Exception(
+                        f"خطأ في الاتصال بالذكاء الاصطناعي عبر Groq ({model_name}) حتى بعد تقليل الحجم:\n{str(second_exc)}"
+                    )
+            else:
+                raise Exception(f"خطأ في الاتصال بالذكاء الاصطناعي عبر Groq ({model_name}):\n{str(first_exc)}")
 
     if not response or not response.choices:
         raise Exception("Groq returned an empty response.")
