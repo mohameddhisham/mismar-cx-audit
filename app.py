@@ -253,6 +253,8 @@ def build_audit_prompt(
     status_history_str = clean_and_minify(order_data.get("status_history"), max_items=15, max_chars=2000)
     pricing_str = clean_and_minify(order_data.get("pricing"), max_items=10, max_chars=2000)
 
+    classifications_list = "\n".join(f"   - {c}" for c in VALID_CLASSIFICATIONS)
+
     prompt_text = f"""
 أنت Senior Operations & CX Forensic Auditor في شركة (مسمار - MisMar).
 مهمتك كتابة تبرير تشغيلي مباشر جداً لمدير العمليات للطلب رقم #{order_id} بناءً على بيانات المرحلة: [{audit_type}].
@@ -283,25 +285,21 @@ def build_audit_prompt(
    - العميل صاحب الطلب → **(العميل)**
    لا تكتب الاسم الأصلي أبداً حتى كتوضيح، مثال: اكتب "تأخر رد المركز" وليس "تأخر رد المركز (فلان الفلاني)".
 
-4) **آخر سطر في التبرير فقط** يجب أن يكون سطراً منفصلاً بأحد التصنيفات التالية بالنص الحرفي بدون أي إضافة:
-   - التصنيف: قطع الغيار
-   - التصنيف: التشغيل
-   - التصنيف: العميل
-   - التصنيف: مركز
-   - التصنيف: لا يوجد تاخير وفق خطه العميل
-   - التصنيف: يوم الجمعه
-   - التصنيف: مكرر
-   - التصنيف: قطع الغيار او المركز
-   - التصنيف: نقل مركز اخر
-   - التصنيف: تشغيل او المركز
-   - التصنيف: قطع الغيار او التشغيل
+4) **حقل التصنيف** يجب أن يكون واحداً فقط بالنص الحرفي من هذه القائمة بالضبط (بدون أي تعديل أو إضافة):
+{classifications_list}
 
-5) الطول: فقرة واحدة مركزة، 3-5 جمل بحد أقصى، بدون تكرار.
+5) الطول: فقرة واحدة مركزة للتبرير، 3-5 جمل بحد أقصى، بدون تكرار.
 
-===SPLIT===
+6) الأدلة: فقرة موجزة منفصلة تدعم السبب الرئيسي فقط (مواعيد، فوارق زمنية، نصوص محادثات)، بنفس قواعد منع الأسماء.
 
-القسم الثاني: [الأدلة والوقائع التفصيلية والربط الزمني]
-اكتب باختصار الأدلة والحقائق المساندة للسبب الرئيسي فقط (مواعيد، فوارق زمنية، نصوص محادثات)، مع الالتزام التام باستخدام (التشغيل) / (المركز) / (العميل) بدلاً من أي اسم شخصي.
+=== 📤 صيغة الإخراج (إلزامية) ===
+أعد الرد **بصيغة JSON صالحة فقط**، بدون أي نص قبله أو بعده، بدون Markdown، بدون علامات ```، بالشكل التالي بالضبط:
+
+{{
+  "justification": "نص التبرير هنا يبدأ بالسبب مباشرة وينتهي بدون سطر تصنيف",
+  "evidence": "نص الأدلة والوقائع هنا",
+  "classification": "أحد التصنيفات المذكورة في القاعدة 4 بالنص الحرفي فقط"
+}}
 """
     return prompt_text
 
@@ -321,16 +319,40 @@ def sanitize_names(text: str) -> str:
     return NAME_TRIGGER_PATTERN.sub("", text)
 
 
-def ensure_single_classification_line(text: str) -> str:
-    """يتأكد إن آخر سطر غير فارغ هو تصنيف صالح، بدون تعديل باقي النص."""
-    lines = [line for line in text.strip().splitlines() if line.strip()]
-    if not lines:
-        return text
-    last_line = lines[-1].strip()
-    if not any(last_line.startswith(c.split(":")[0] + ":") or last_line == c for c in VALID_CLASSIFICATIONS):
-        # لو آخر سطر مش تصنيف صريح، سيبه زي ما هو (تنبيه بصري في الواجهة كفاية)
+def extract_json_object(raw_text: str) -> dict[str, Any]:
+    """يحاول استخراج JSON صالح من رد الموديل حتى لو اتحاط جوه ```json``` أو فيه نص زيادة حواليه."""
+    if not raw_text:
+        raise ValueError("رد فارغ من الموديل.")
+
+    cleaned = raw_text.strip()
+    # شيل أي code fences
+    cleaned = re.sub(r"^```(?:json)?\s*|\s*```$", "", cleaned.strip(), flags=re.IGNORECASE | re.MULTILINE)
+
+    try:
+        return json.loads(cleaned)
+    except json.JSONDecodeError:
         pass
-    return text
+
+    # آخر محاولة: هات أول { لحد آخر } في النص كله
+    start = cleaned.find("{")
+    end = cleaned.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        candidate = cleaned[start : end + 1]
+        try:
+            return json.loads(candidate)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"تعذر تحويل رد الموديل إلى JSON صالح: {exc}\n\nالرد الخام:\n{raw_text[:800]}")
+
+    raise ValueError(f"رد الموديل لا يحتوي على JSON:\n\n{raw_text[:800]}")
+
+
+def normalize_classification(classification: str) -> str:
+    """يتأكد إن التصنيف من ضمن القائمة المسموحة، وإلا يرجّع القيمة الخام مع تحذير."""
+    classification = (classification or "").strip()
+    for valid in VALID_CLASSIFICATIONS:
+        if classification == valid or classification == valid.replace("التصنيف: ", ""):
+            return valid
+    return classification if classification else "غير محدد"
 
 
 # ============================================================
@@ -342,43 +364,61 @@ def analyze_order_rating(
     order_id: int,
     audit_type: str,
     model_name: str,
-) -> str:
+) -> dict[str, str]:
 
     order_data = fetch_order_data(order_id)
     prompt = build_audit_prompt(order_id, order_data, audit_type)
 
     client = Groq(api_key=api_key.strip())
 
+    system_message = (
+        "أنت Senior Operations وCX Forensic Auditor. اكتب التبرير كجملة سبب مباشرة "
+        "بدون أي مقدمة أو ديباجة، بسبب جذري واحد فقط بدون ذكر أي أسباب ثانوية، "
+        "وبدون ذكر أي اسم شخص إطلاقاً (استخدم فقط: التشغيل / المركز / العميل). "
+        "يجب أن يكون ردك بالكامل عبارة عن JSON صالح فقط بالحقول justification و evidence و classification، "
+        "بدون أي نص أو Markdown حول الـ JSON."
+    )
+
+    request_kwargs = dict(
+        model=model_name,
+        messages=[
+            {"role": "system", "content": system_message},
+            {"role": "user", "content": prompt},
+        ],
+        temperature=0.2,
+        top_p=0.9,
+        max_tokens=2000,
+    )
+
     try:
+        # نحاول نجبر JSON mode لو الموديل بيدعمها (بيقلل جداً فرصة كسر الفورمات)
         response = client.chat.completions.create(
-            model=model_name,
-            messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        "أنت Senior Operations وCX Forensic Auditor. اكتب التبرير كجملة سبب مباشرة "
-                        "بدون أي مقدمة أو ديباجة، بسبب جذري واحد فقط بدون ذكر أي أسباب ثانوية، "
-                        "وبدون ذكر أي اسم شخص إطلاقاً (استخدم فقط: التشغيل / المركز / العميل)، "
-                        "وأنهِ الرد بسطر تصنيف واحد فقط من القائمة المحددة بالنص الحرفي."
-                    ),
-                },
-                {"role": "user", "content": prompt},
-            ],
-            temperature=0.2,
-            top_p=0.9,
-            max_tokens=2000,
+            response_format={"type": "json_object"}, **request_kwargs
         )
-    except Exception as exc:
-        raise Exception(f"خطأ في الاتصال بالذكاء الاصطناعي عبر Groq ({model_name}):\n{str(exc)}")
+    except Exception:
+        try:
+            response = client.chat.completions.create(**request_kwargs)
+        except Exception as exc:
+            raise Exception(f"خطأ في الاتصال بالذكاء الاصطناعي عبر Groq ({model_name}):\n{str(exc)}")
 
     if not response or not response.choices:
         raise Exception("Groq returned an empty response.")
 
-    content = response.choices[0].message.content
-    content = content.strip() if content else ""
-    content = sanitize_names(content)
-    content = ensure_single_classification_line(content)
-    return content
+    raw_content = response.choices[0].message.content or ""
+    parsed = extract_json_object(raw_content)
+
+    justification = sanitize_names(str(parsed.get("justification", "")).strip())
+    evidence = sanitize_names(str(parsed.get("evidence", "")).strip())
+    classification = normalize_classification(str(parsed.get("classification", "")))
+
+    if not justification:
+        raise Exception(f"رد الموديل لا يحتوي على حقل justification صالح.\n\nالرد الخام:\n{raw_content[:800]}")
+
+    return {
+        "justification": justification,
+        "evidence": evidence if evidence else "لا توجد أدلة تفصيلية إضافية.",
+        "classification": classification,
+    }
 
 
 # ============================================================
@@ -450,22 +490,17 @@ with col2:
         else:
             with st.spinner(f"⏳ جاري استخراج التبرير المباشر لـ ({audit_type})..."):
                 try:
-                    full_response = analyze_order_rating(
+                    parsed_result = analyze_order_rating(
                         api_key=api_key,
                         order_id=int(order_id),
                         audit_type=audit_type,
                         model_name=selected_model,
                     )
 
-                    if "===SPLIT===" in full_response:
-                        justification, evidence = full_response.split("===SPLIT===", 1)
-                    else:
-                        justification = full_response
-                        evidence = "لم يتم تفكيك الأدلة بشكل منفصل."
-
                     st.session_state["audit_result"] = {
-                        "justification": justification.strip(),
-                        "evidence": evidence.strip(),
+                        "justification": parsed_result["justification"],
+                        "evidence": parsed_result["evidence"],
+                        "classification": parsed_result["classification"],
                         "order_id": int(order_id),
                         "audit_type": audit_type,
                         "model": selected_model,
@@ -480,13 +515,17 @@ if "audit_result" in st.session_state and st.session_state["audit_result"]:
     result = st.session_state["audit_result"]
     justification = result["justification"]
     evidence = result["evidence"]
+    classification = result.get("classification", "غير محدد")
 
     st.markdown(f"### 📝 التبرير التشغيلي المباشر:")
     safe_justification = html.escape(justification)
 
     st.markdown(f'<div class="justification-card">{safe_justification}</div>', unsafe_allow_html=True)
 
-    st.text_area("📋 اضغط Ctrl+A ثم Ctrl+C للنسخ المباشر:", value=justification, height=150)
+    st.markdown(f"**🏷️ {html.escape(classification)}**")
+
+    copy_text = f"{justification}\n\n{classification}"
+    st.text_area("📋 اضغط Ctrl+A ثم Ctrl+C للنسخ المباشر:", value=copy_text, height=150)
 
     st.markdown("### 🔍 الأدلة والوقائع التفصيلية:")
     safe_evidence = html.escape(evidence)
