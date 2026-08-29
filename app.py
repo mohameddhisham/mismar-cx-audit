@@ -7,221 +7,7 @@ import streamlit as st
 from groq import Groq
 
 # ============================================================
-# PAGE CONFIG & STYLES
-# ============================================================
-
-st.set_page_config(
-    page_title="نظام تدقيق الطلبات والجودة | مسمار MisMar",
-    page_icon="🚗",
-    layout="wide",
-    initial_sidebar_state="expanded",
-)
-
-st.markdown(
-    """
-    <style>
-    @import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800&display=swap');
-
-    html, body, [class*="css"] {
-        font-family: 'Tajawal', sans-serif;
-        direction: rtl;
-        text-align: right;
-    }
-
-    .stApp {
-        background-color: #0B0F19;
-        color: #F3F4F6;
-    }
-
-    .mismar-header {
-        background: linear-gradient(135deg, #064E3B 0%, #0F172A 100%);
-        padding: 30px;
-        border-radius: 20px;
-        border: 1px solid rgba(16, 185, 129, 0.25);
-        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
-        margin-bottom: 30px;
-        text-align: center;
-        direction: rtl;
-    }
-
-    .mismar-header h1 {
-        color: #10B981;
-        font-weight: 800;
-        font-size: 2.2rem;
-        margin: 0 0 10px 0;
-    }
-
-    .mismar-header p {
-        color: #9CA3AF;
-        font-size: 1.05rem;
-        margin: 0;
-    }
-
-    .justification-card {
-        background: linear-gradient(180deg, #111827 0%, #1F2937 100%);
-        border-right: 6px solid #10B981;
-        padding: 22px;
-        border-radius: 14px;
-        font-size: 1.15rem;
-        line-height: 1.95;
-        color: #F9FAFB;
-        box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
-        margin-bottom: 16px;
-        direction: rtl;
-        text-align: right;
-    }
-
-    .evidence-card {
-        background-color: #111827;
-        border: 1px solid #374151;
-        padding: 22px;
-        border-radius: 14px;
-        color: #D1D5DB;
-        line-height: 1.8;
-        white-space: pre-wrap;
-        direction: rtl;
-        text-align: right;
-    }
-
-    .stButton > button {
-        width: 100%;
-        background: linear-gradient(90deg, #10B981 0%, #059669 100%);
-        color: #FFFFFF;
-        font-weight: 700;
-        font-size: 1.15rem;
-        padding: 14px;
-        border-radius: 12px;
-        border: none;
-        box-shadow: 0 4px 14px rgba(16, 185, 129, 0.3);
-        transition: all 0.3s ease;
-    }
-
-    .stButton > button:hover {
-        background: linear-gradient(90deg, #059669 0%, #047857 100%);
-        transform: translateY(-2px);
-    }
-
-    section[data-testid="stSidebar"] {
-        background-color: #0F172A;
-    }
-
-    input, textarea {
-        direction: rtl !important;
-        text-align: right !important;
-    }
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
-
-# ============================================================
-# METABASE & GROQ ENDPOINTS
-# ============================================================
-
-METABASE_ENDPOINTS = {
-    "tickets": "https://analysis.mismarapp.com/public/question/5f313cbe-6bb4-43bc-9b4d-70b8de7d17d4.json",
-    "comments": "https://analysis.mismarapp.com/public/question/82aba25f-d368-44e3-8392-dce163d78e23.json",
-    "status_history": "https://analysis.mismarapp.com/public/question/98fe13e6-298a-4775-8244-3015c9c720fe.json",
-    "pricing": "https://analysis.mismarapp.com/public/question/b0114e1f-8577-4faa-a790-eaa2412f39f6.json",
-}
-
-GROQ_MODELS_URL = "https://api.groq.com/openai/v1/models"
-
-
-def get_groq_models(api_key: str) -> list[dict[str, Any]]:
-    api_key = api_key.strip()
-    if not api_key:
-        raise ValueError("Groq API Key غير موجود.")
-
-    response = requests.get(
-        GROQ_MODELS_URL,
-        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-        timeout=20,
-    )
-
-    if response.status_code != 200:
-        raise Exception(f"فشل جلب موديلات Groq.\n\nHTTP {response.status_code}\n{response.text}")
-
-    data = response.json()
-    models = data.get("data", [])
-    if not isinstance(models, list):
-        raise Exception("Groq returned an unexpected models response.")
-
-    return models
-
-
-def get_model_ids(api_key: str) -> list[str]:
-    models = get_groq_models(api_key)
-    model_ids = [model.get("id") for model in models if model.get("id")]
-    return sorted(set(model_ids))
-
-
-def choose_best_model(model_ids: list[str]) -> str | None:
-    preferred_models = [
-        "llama-3.3-70b-versatile",
-        "openai/gpt-oss-120b",
-        "qwen/qwen3.6-27b",
-        "llama-3.1-8b-instant",
-    ]
-    available = set(model_ids)
-    for preferred in preferred_models:
-        if preferred in available:
-            return preferred
-    return model_ids[0] if model_ids else None
-
-# ============================================================
-# FETCH & CLEAN ORDER DATA
-# ============================================================
-
-def fetch_order_data(order_id: int) -> dict[str, Any]:
-    payload = {}
-    for key, url in METABASE_ENDPOINTS.items():
-        try:
-            response = requests.get(url, params={"order_id": order_id}, timeout=20)
-            if response.status_code == 200:
-                try:
-                    payload[key] = response.json()
-                except ValueError:
-                    payload[key] = "Error: Invalid JSON returned by Metabase."
-            else:
-                payload[key] = f"Error HTTP {response.status_code}: {response.text[:500]}"
-        except Exception as exc:
-            payload[key] = f"Error: {str(exc)}"
-    return payload
-
-
-def clean_and_minify(data: Any, max_items: int = 15, max_chars: int = 2500) -> str:
-    if not data:
-        return "[]"
-    if isinstance(data, dict) and "data" in data:
-        data = data["data"]
-        
-    if isinstance(data, list):
-        data = data[-max_items:]
-        cleaned_list = []
-        for item in data:
-            if isinstance(item, dict):
-                cleaned_dict = {}
-                for k, v in item.items():
-                    if v in (None, "", [], {}): 
-                        continue
-                    key_lower = str(k).lower()
-                    if "url" in key_lower or "uuid" in key_lower or "token" in key_lower:
-                        continue
-                    cleaned_dict[k] = v
-                cleaned_list.append(cleaned_dict)
-            else:
-                cleaned_list.append(item)
-        result_str = json.dumps(cleaned_list, ensure_ascii=False, indent=2)
-    else:
-        result_str = json.dumps(data, ensure_ascii=False, indent=2)
-        
-    if len(result_str) > max_chars:
-        result_str = result_str[-max_chars:]
-    return result_str
-
-# ============================================================
-# DYNAMIC PROMPT BUILDER
+# DYNAMIC PROMPT BUILDER WITH MATCHING CLASSIFICATIONS
 # ============================================================
 
 def build_audit_prompt(
@@ -269,7 +55,11 @@ def build_audit_prompt(
 
     prompt_text = f"""
 أنت Senior Operations & CX Forensic Auditor في شركة (مسمار - MisMar).
-مهمتك كتابة تبرير تشغيلي مباشر وموجز لمدير العمليات للطلب رقم #{order_id} بناءً على بيانات المرحلة: [{audit_type}].
+مهمتك كتابة تبرير تشغيلي مباشر لمدير العمليات للطلب رقم #{order_id} للتحقيق في مرحلة: [{audit_type}].
+
+🛑 تنبيه جنائي حاسم:
+قد يكون الطلب حالياً متكتملاً أو في حالة سابقة/لاحقة (مثلاً: تم التسليم)، ولكن المراجعة استقصائية وموجهة حصراً لمرحلة [{audit_type}].
+ابحث في السجل الزمني للحالات (`status_history`) عن **أحدث/أطول فترة** كان فيها الطلب في هذه المرحلة بالذات [{audit_type}]، واربط التعليقات والتذاكر والتسعير التي وقعت داخل النطاق الزمني لهذه المرحلة خصيصاً.
 
 البيانات المتاحة للطلب:
 1. 🎫 تذاكر الشكاوى والمتابعة: {tickets_str}
@@ -283,12 +73,12 @@ def build_audit_prompt(
 القسم الأول:
 اكتب السبب الرئيسي مباشرة دون أي عناوين أو تكرار أو ديباجات، متبوعاً بالتصنيف في السطر الأخير فقط.
 
-📌 **مثال للنسق المطلوب للقسم الأول (التزم بالنموذج حرفياً):**
+📌 **نموذج إجباري للتنسيق في القسم الأول (التزم بالنموذج حرفياً):**
 تأخير في توريد قطع الغيار اللازمة للعملية وإتمام الفحص النهائي من جهة المورد، مما تسبب في توقف الطلب لمدة تزيد عن 115 ساعة قبل بدء الصيانة الفعلية دون متابعة لتسريع الاستلام.
 التصنيف: قطع الغيار
 
 🛑 **شروط القسم الأول:**
-- اكتب فقرة واحدة فقط من 2-4 سطور تمثل السبب الرئيسي والأقوى فقط.
+- اكتب فقرة واحدة فقط من 2-4 سطور تمثل السبب الرئيسي والأقوى فقط خلال فترة مرحلة [{audit_type}].
 - ممنوع كتابة أي عناوين مثل "التبرير التشغيلي المباشر" وممنوع تكرار سطر التصنيف أكثر من مرة.
 - يُمنع ذكر أسامي أفراد (استخدم الألقاب: التشغيل / المركز).
 - السطر الأخير يجب أن يحتوي على خيار واحد فقط من القائمة التالية:
@@ -297,7 +87,7 @@ def build_audit_prompt(
 ===SPLIT===
 
 القسم الثاني:
-أدلة وقائع تفصيلية وحساب التوقيتات والأدلة من التذاكر والشات باختصار.
+أدلة وقائع تفصيلية وحساب التوقيتات والأدلة من التذاكر والشات باختصار للمرحلة المحددة [{audit_type}].
 """
     return prompt_text
 
