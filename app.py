@@ -193,9 +193,26 @@ def choose_best_model(model_ids: list[str]) -> str | None:
     return model_ids[0] if model_ids else None
 
 
+def get_reasoning_kwargs(model_name: str) -> dict[str, str]:
+    """
+    كل عيلة موديلات reasoning عندها طريقة مختلفة لإيقاف/تقليل التفكير الداخلي:
+    - qwen3 (زي qwen/qwen3.6-27b): بتتلغي تمامًا بـ reasoning_effort='none'،
+      وreasoning_format='hidden' يمنع ظهور <think> في المحتوى خالص كطبقة أمان إضافية.
+    - gpt-oss: مبتقبلش 'none'، أقل قيمة متاحة هي 'low'.
+    """
+    name = model_name.lower()
+    if "qwen" in name:
+        return {"reasoning_effort": "none", "reasoning_format": "hidden"}
+    if "gpt-oss" in name:
+        return {"reasoning_effort": "low"}
+    if "deepseek-r1" in name:
+        return {"reasoning_format": "hidden"}
+    return {}
+
+
 def is_reasoning_model_name(model_name: str) -> bool:
     name = model_name.lower()
-    return "gpt-oss" in name or "reasoning" in name or "deepseek-r1" in name
+    return "gpt-oss" in name or "qwen" in name or "reasoning" in name or "deepseek-r1" in name
 
 
 def get_fallback_model(model_ids: list[str], failed_model: str) -> str | None:
@@ -366,8 +383,18 @@ def extract_json_object(raw_text: str) -> dict[str, Any]:
         raise ValueError("رد فارغ من الموديل.")
 
     cleaned = raw_text.strip()
+
+    # شيل أي بلوك تفكير داخلي متسرب (زي موديلات qwen3/deepseek لو reasoning_format فشل يتفعّل)
+    cleaned = re.sub(r"<think>.*?</think>", "", cleaned, flags=re.DOTALL | re.IGNORECASE)
+    # لو فيه <think> من غير إغلاق (اتقطع بسبب نفاد max_tokens في التفكير) امسح لحد آخر النص
+    cleaned = re.sub(r"<think>.*$", "", cleaned, flags=re.DOTALL | re.IGNORECASE)
+    cleaned = cleaned.strip()
+
     # شيل أي code fences
     cleaned = re.sub(r"^```(?:json)?\s*|\s*```$", "", cleaned.strip(), flags=re.IGNORECASE | re.MULTILINE)
+
+    if not cleaned:
+        raise ValueError("EMPTY_CONTENT: الرد كان كله تفكير داخلي (think) من غير إجابة فعلية بعده.")
 
     try:
         return json.loads(cleaned)
@@ -459,8 +486,8 @@ def _run_single_model_analysis(
             max_tokens=output_tokens,
         )
         if is_reasoning_model:
-            # جهد تفكير منخفض = توكنز أكتر متاحة فعلياً لكتابة الإجابة بدل ما تتاكل في التفكير الداخلي
-            request_kwargs["reasoning_effort"] = "low"
+            # كل عيلة موديلات ليها الإعداد الصحيح لإيقاف/تقليل التفكير الداخلي
+            request_kwargs.update(get_reasoning_kwargs(model_name))
 
         try:
             try:
