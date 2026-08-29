@@ -149,24 +149,6 @@ st.markdown(
         text-align: right;
     }
 
-    .model-card {
-        background-color: #111827;
-
-        border: 1px solid #374151;
-
-        padding: 12px 16px;
-
-        border-radius: 10px;
-
-        margin-bottom: 10px;
-
-        direction: ltr;
-
-        text-align: left;
-
-        color: #D1D5DB;
-    }
-
     .stButton > button {
         width: 100%;
 
@@ -229,29 +211,10 @@ st.markdown(
 # ============================================================
 
 METABASE_ENDPOINTS = {
-    "tickets": (
-        "https://analysis.mismarapp.com/"
-        "public/question/"
-        "5f313cbe-6bb4-43bc-9b4d-70b8de7d17d4.json"
-    ),
-
-    "comments": (
-        "https://analysis.mismarapp.com/"
-        "public/question/"
-        "82aba25f-d368-44e3-8392-dce163d78e23.json"
-    ),
-
-    "status_history": (
-        "https://analysis.mismarapp.com/"
-        "public/question/"
-        "98fe13e6-298a-4775-8244-3015c9c720fe.json"
-    ),
-
-    "pricing": (
-        "https://analysis.mismarapp.com/"
-        "public/question/"
-        "b0114e1f-8577-4faa-a790-eaa2412f39f6.json"
-    ),
+    "tickets": "https://analysis.mismarapp.com/public/question/5f313cbe-6bb4-43bc-9b4d-70b8de7d17d4.json",
+    "comments": "https://analysis.mismarapp.com/public/question/82aba25f-d368-44e3-8392-dce163d78e23.json",
+    "status_history": "https://analysis.mismarapp.com/public/question/98fe13e6-298a-4775-8244-3015c9c720fe.json",
+    "pricing": "https://analysis.mismarapp.com/public/question/b0114e1f-8577-4faa-a790-eaa2412f39f6.json",
 }
 
 GROQ_MODELS_URL = "https://api.groq.com/openai/v1/models"
@@ -261,7 +224,6 @@ GROQ_MODELS_URL = "https://api.groq.com/openai/v1/models"
 # ============================================================
 
 def get_groq_models(api_key: str) -> list[dict[str, Any]]:
-    """جلب كل الموديلات التي يستطيع مفتاح Groq الحالي الوصول إليها فعلياً."""
     api_key = api_key.strip()
     if not api_key:
         raise ValueError("Groq API Key غير موجود.")
@@ -300,14 +262,10 @@ def get_model_ids(api_key: str) -> list[str]:
 
 def choose_best_model(model_ids: list[str]) -> str | None:
     preferred_models = [
-        "openai/gpt-oss-120b",
-        "openai/gpt-oss-20b",
-        "qwen/qwen3.6-27b",
-        "qwen/qwen3.8-27b",
         "llama-3.3-70b-versatile",
+        "openai/gpt-oss-120b",
+        "qwen/qwen3.6-27b",
         "llama-3.1-8b-instant",
-        "groq/compound",
-        "groq/compound-mini",
     ]
 
     available = set(model_ids)
@@ -353,7 +311,7 @@ def fetch_order_data(order_id: int) -> dict[str, Any]:
 # DATA CLEANING UTILITY
 # ============================================================
 
-def clean_and_minify(data: Any, max_items: int = 10, max_chars: int = 1500) -> str:
+def clean_and_minify(data: Any, max_items: int = 15, max_chars: int = 2500) -> str:
     if not data:
         return "[]"
         
@@ -370,16 +328,16 @@ def clean_and_minify(data: Any, max_items: int = 10, max_chars: int = 1500) -> s
                     if v in (None, "", [], {}): 
                         continue
                     key_lower = str(k).lower()
-                    if "id" in key_lower or "url" in key_lower or "uuid" in key_lower or "token" in key_lower:
+                    if "url" in key_lower or "uuid" in key_lower or "token" in key_lower:
                         continue
                     cleaned_dict[k] = v
                 cleaned_list.append(cleaned_dict)
             else:
                 cleaned_list.append(item)
                 
-        result_str = json.dumps(cleaned_list, ensure_ascii=False, separators=(',', ':'))
+        result_str = json.dumps(cleaned_list, ensure_ascii=False, indent=2)
     else:
-        result_str = json.dumps(data, ensure_ascii=False, separators=(',', ':'))
+        result_str = json.dumps(data, ensure_ascii=False, indent=2)
         
     if len(result_str) > max_chars:
         result_str = result_str[-max_chars:]
@@ -387,7 +345,7 @@ def clean_and_minify(data: Any, max_items: int = 10, max_chars: int = 1500) -> s
     return result_str
 
 # ============================================================
-# BUILD AUDIT PROMPT (ENHANCED FORENSIC AUDIT PROMPT)
+# BUILD AUDIT PROMPT (EXACT USER PROMPT)
 # ============================================================
 
 def build_audit_prompt(
@@ -396,55 +354,54 @@ def build_audit_prompt(
     ratings: dict[str, int],
 ) -> str:
 
-    ratings_json = json.dumps(ratings, ensure_ascii=False, separators=(',', ':'))
+    ratings_context = f"تقييمات العميل المدخلة للطلب: {ratings}\n" if ratings else ""
 
-    tickets_json = clean_and_minify(order_data.get("tickets"), max_items=5, max_chars=1200)
-    comments_json = clean_and_minify(order_data.get("comments"), max_items=15, max_chars=2500)
-    status_history_json = clean_and_minify(order_data.get("status_history"), max_items=10, max_chars=1200)
-    pricing_json = clean_and_minify(order_data.get("pricing"), max_items=5, max_chars=1200)
+    tickets_str = clean_and_minify(order_data.get("tickets"), max_items=10, max_chars=2000)
+    comments_str = clean_and_minify(order_data.get("comments"), max_items=20, max_chars=3500)
+    status_history_str = clean_and_minify(order_data.get("status_history"), max_items=15, max_chars=2000)
+    pricing_str = clean_and_minify(order_data.get("pricing"), max_items=10, max_chars=2000)
 
-    prompt = f"""
-أنت Senior Operations & CX Forensic Auditor في منصة "مسمار - MisMar" لصيانة السيارات.
-مهمتك إجراء تدقيق جنائي تشغيلي لبيانات الطلب #{order_id} واستخراج التبرير التشغيلي المباشر والدقيق لمدير العمليات.
+    prompt_text = f"""
+    أنت كبير مدققي العمليات وتجربة العملاء (Senior Operations & CX Forensic Auditor) في شركة صيانة السيارات (مسمار - MisMar).
+    وظيفتك إجراء فحص ودراسة جنائية تشغيلية متكاملة لبيانات الطلب رقم #{order_id} للوصول للسبب الجذر المباشر خلف التقييم المنخفض.
 
-تقييمات العميل المدخلة للطلب:
-{ratings_json}
+    {ratings_context}
 
-بيانات الطلب النيئة المستخرجة من النظام:
-1. 🎫 تذاكر الشكاوى والمتابعة (اقرأ وصف الشكوى Description والنتيجة Result وقسم التذكرة):
-{tickets_json}
+    البيانات المتاحة للطلب:
+    1. 🎫 تذاكر الشكاوى والمتابعة (افحص خانة Description، خانة Result، تواريخ الإنشاء والإغلاق، واسم قسم التذكرة): 
+    {tickets_str}
 
-2. 💬 محادثات الشات والتعليقات الداخلية (افحص نصوص المحادثات بين التشغيل والمركز والعميل، التواقيت، وهوية المُرسل):
-{comments_json}
+    2. 💬 محادثات الشات والتعليقات الداخلية (افحص نصوص المحادثات بين التشغيل والمركز والعميل، التواقيت، هوية المُرسل، تفاصيل المفاوضات وأجور اليد): 
+    {comments_str}
 
-3. ⏱️ التسلسل الزمني للحالات والمدد (احسب أوقات الانتظار والتأخير بين الحالات المختلفة):
-{status_history_json}
+    3. ⏱️ التسلسل الزمني للحالات والمدد (احسب المدة بين كل حالة وأخرى بالدقيقة والساعة واكتشف محطات التعطيل): 
+    {status_history_str}
 
-4. 💰 طلبات التسعير وعروض الأسعار (افحص الفارق الزمني للتسعير، أجور اليد مقارنة بأسعار القطع، والرفض/القبول):
-{pricing_json}
+    4. 💰 طلبات التسعير وعروض الأسعار (افحص الفارق الزمني بين طلب التسعير ورفع عرض السعر، تفاصيل قطع الغيار مقابل أجور اليد، العروض المرفوضة والمقبولة): 
+    {pricing_str}
 
-=== 🎯 تعليمات الصياغة والتحليل الجنائي الصارمة ===
-قم بتقسيم إجابتك إلى قسمين تفصل بينهما الكلمة المفتاحية `===SPLIT===`:
+    === 🎯 تعليمات وقواعد الصياغة الصارمة ===
+    قم بتقسيم إجابتك إلى قسمين يفصل بينهما السطر `===SPLIT===`:
 
-القسم الأول: [التبرير التشغيلي المباشر لمدير العمليات]
-- اكتب فقرة واحدة فقط متصلة من 3 إلى 5 سطور (جاهزة للنسخ واللصق فوراً لمدير العمليات).
-- 🛑 ممنوع نهائياً البدء بسرد الدرجات أو التقييمات (مثل: "يعود سبب تقييم العميل 2/5 للسعر...").
-- 🛑 ممنوع استخدام العبارات العامة والفضفاضة (مثل "بسبب التأخير والأخطاء التشغيلية").
-- 🟢 ابدأ فوراً بالسبب التشغيلي المباشر والجذري (مثال: "يعود سبب اعتراض العميل على السعر إلى...").
-- 🔍 في أسباب السعر: ابحث عن السبب الحقيقي من الشات والتذاكر (مثل: المبالغة في أجور يد الفحص، إضافة القطع الاستهلاكية بدون موافقة مبدئية، أو الخلاف على تسعير قطع التشليح).
-- 🔍 في أسباب الوقت: حدد الطرف المتسبب بالتأخير بدقة من واقع التوقيتات (مثل: تأخر مركز الصيانة 6 ساعات في التشخيص، أو تأخر المورد في توفير القطع).
-- يُمنع استخدام القوائم أو العناوين أو أرقام التذاكر والعروض الداخليّة في هذا القسم.
+    القسم الأول: [التبرير التشغيلي المباشر لمدير العمليات]
+    - فقرة واحدة متصلة ومباشرة فقط (من 4 إلى 5 سطور كحد أقصى).
+    - 🛑 **يُمنع تماماً** البدء بذكر أو سرد درجات التقييمات مثل: (يعود سبب تقييم العميل للسعر بـ 2/5 والوقت بـ 3/5...).
+    - 🛑 **يُمنع تماماً** استخدام جمل فضفاضة مثل "بسبب كثرة عروض الأسعار والارتباك" دون ذكر السبب الحقيقي الذي أدى لرفض العروض.
+    - 🟢 **ابدأ فوراً وبشكل مباشر** بالسبب الحقيقي المستخرج من التذاكر والشات.
+    - 🔍 **البحث عن السبب الجذر للأسعار:** اربط اعتراض السعر بالنص المكتوب داخل التذاكر (مثل: اعتراض العميل على ارتفاع أجور اليد مقارنة بأسعار السوق، إضافة قطع اختيارية بشكل مفاجئ دون استشارة العميل، أو الخلاف على تسعير قطع التشليح).
+    - 🔍 **البحث عن السبب الجذر للتأخير:** ارجع لتعليقات الشات والتسلسل الزمني لتحديد المتسبب الفعلي في التأخير (مثل: تأخر المركز في التشخيص المبدئي، أو تأخر توريد القطع من المورد).
+    - يُمنع استخدام القوائم، العناوين، أو أرقام التذاكر والعروض الداخلية (مثل #658323).
 
-===SPLIT===
+    ===SPLIT===
 
-القسم الثاني: [الأدلة والوقائع التفصيلية والربط الزمني]
-اكتب بتفصيل كامل كافة الحقائق والأدلة المساندة المستخرجة من البيانات:
-1. ⏱️ التحليل الزمني (Timeline Deltas): احسب المدة الدقيقة بين طلب التسعير ورفع العرض، وأطول حالة تعطيل بالدقيقة/الساعة.
-2. 🎫 أدلة التذاكر: اقتبس نص الشكوى (Description) والنتيجة (Result) بالنص.
-3. 💬 أدلة الشات: اقتبس نصوص المفاوضات والرسائل الهامة مع التوقيتات والمُرسل.
-4. 💰 تحليل التسعير: فكّك اعتراضات العميل على أجور اليد مقابل قطع الغيار، وسبب رفض العروض المبدئية.
-"""
-    return prompt
+    القسم الثاني: [الأدلة والوقائع التفصيلية والربط الزمني]
+    - اكتب هنا بتفصيل كامل وبلا حدود للحجم كافة الأدلة والحقائق المستخرجة من البيانات الأربعة التي أدت للصياغة أعلاه:
+      1. ⏱️ التحليل الزمني للدلتا (Timeline Deltas): احسب بدقة كم استغرق رفع عرض السعر بعد طلب التسعير، وكم استغرقت الحالة الأكثر تأخيراً.
+      2. 🎫 أدلة التذاكر: اقتبس نصوص الشكوى (`description`) ونتيجة التذكرة (`result`) كلمة بكلمة (مثل شكاوى أجور اليد والمقارنة بالسوق).
+      3. 💬 أدلة الشات: اذكر رسائل المفاوضات ومحادثات مركز الصيانة بالنص مع التوقيت.
+      4. 💰 تحليل التسعير: حدد فروق الأسعار، اعتراضات أجور اليد مقابل قطع الغيار، وسبب رفض العروض المبدئية.
+    """
+    return prompt_text
 
 # ============================================================
 # GROQ ANALYSIS RUNNER
@@ -477,7 +434,7 @@ def analyze_order_rating(
             ],
             temperature=0.3,
             top_p=0.9,
-            max_tokens=2000,
+            max_tokens=2500,
         )
     except Exception as exc:
         raise Exception(
@@ -542,7 +499,7 @@ with st.sidebar:
                     "🤖 اختر موديل Groq",
                     options=available_models,
                     index=default_index,
-                    help="هذه هي الموديلات التي يراها مفتاح Groq الحالي فعلياً.",
+                    help="تلميح: الموديل llama-3.3-70b-versatile يُعطي أفضل نتائج تحليلية عربية.",
                 )
 
                 st.success(f"✅ تم العثور على {len(available_models)} موديل")
@@ -553,11 +510,6 @@ with st.sidebar:
         except Exception as exc:
             st.error("❌ فشل اكتشاف موديلات Groq")
             st.code(str(exc), language="text")
-
-    if available_models:
-        with st.expander(f"📚 كل الموديلات المتاحة ({len(available_models)})"):
-            for index, model in enumerate(available_models, start=1):
-                st.write(f"{index}. `{model}`")
 
 # ============================================================
 # MAIN LAYOUT & INPUTS
