@@ -351,10 +351,11 @@ def clean_and_minify(data: Any, max_items: int = 15, max_chars: int = 2500) -> s
 def build_audit_prompt(
     order_id: int,
     order_data: dict[str, Any],
-    ratings: dict[str, int],
+    ratings: dict[str, int] | None,
     audit_type: str,
 ) -> str:
 
+    # إضافة سياق التقييمات فقط لو متاحة ومطلوبة
     ratings_context = f"تقييمات العميل المدخلة للطلب: {ratings}\n" if ratings else ""
 
     tickets_str = clean_and_minify(order_data.get("tickets"), max_items=10, max_chars=2000)
@@ -445,7 +446,7 @@ def build_audit_prompt(
 def analyze_order_rating(
     api_key: str,
     order_id: int,
-    ratings: dict[str, int],
+    ratings: dict[str, int] | None,
     audit_type: str,
     model_name: str,
 ) -> str:
@@ -576,27 +577,31 @@ with col1:
         help="حدد الهدف الجذري الذي تريد حصر التحليل عليه ليقوم النظام بالفحص الموجه"
     )
 
-    st.markdown("---")
-    st.markdown("##### ⭐️ تقييمات العميل المدخلة (اختياري):")
+    # 🛑 إظهار السلايدرات وتقييمات العميل فقط لو اخترنا التدقيق الشامل للتقييمات
+    sample_ratings = None
 
-    col_r1, col_r2 = st.columns(2)
+    if audit_type == "تدقيق التقييمات المنخفضة (شامل)":
+        st.markdown("---")
+        st.markdown("##### ⭐️ تقييمات العميل المدخلة:")
 
-    with col_r1:
-        time_rating = st.slider("الوقت ⏱️", 1, 5, 5)
-        price_rating = st.slider("السعر 💰", 1, 5, 3)
-        quality_rating = st.slider("الجودة 🛠️", 1, 5, 5)
+        col_r1, col_r2 = st.columns(2)
 
-    with col_r2:
-        cs_rating = st.slider("خدمة العملاء 🎧", 1, 5, 5)
-        overall_rating = st.slider("التقييم العام ⭐️", 1, 5, 5)
+        with col_r1:
+            time_rating = st.slider("الوقت ⏱️", 1, 5, 5)
+            price_rating = st.slider("السعر 💰", 1, 5, 3)
+            quality_rating = st.slider("الجودة 🛠️", 1, 5, 5)
 
-    sample_ratings = {
-        "الوقت": time_rating,
-        "السعر": price_rating,
-        "الجودة": quality_rating,
-        "خدمة العملاء": cs_rating,
-        "التقييم العام": overall_rating,
-    }
+        with col_r2:
+            cs_rating = st.slider("خدمة العملاء 🎧", 1, 5, 5)
+            overall_rating = st.slider("التقييم العام ⭐️", 1, 5, 5)
+
+        sample_ratings = {
+            "الوقت": time_rating,
+            "السعر": price_rating,
+            "الجودة": quality_rating,
+            "خدمة العملاء": cs_rating,
+            "التقييم العام": overall_rating,
+        }
 
     st.markdown("<br>", unsafe_allow_html=True)
     analyze_btn = st.button("🚀 بدء التدقيق الموجه واستخراج التبرير")
