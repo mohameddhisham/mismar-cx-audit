@@ -177,17 +177,42 @@ def get_model_ids(api_key: str) -> list[str]:
 
 
 def choose_best_model(model_ids: list[str]) -> str | None:
+    # رتّبنا الموديلات المستقرة (مش reasoning، ومحدودة أقل من ناحية TPM على الـ free tier) أولاً.
+    # gpt-oss-120b موديل reasoning بيستهلك جزء من ميزانيته في تفكير داخلي، فبنسيبه آخر اختيار تلقائي
+    # مع ذلك، لسه متاح للاختيار اليدوي من القائمة المنسدلة لو حد عايزه تحديدًا.
     preferred_models = [
         "llama-3.3-70b-versatile",
-        "openai/gpt-oss-120b",
-        "qwen/qwen3.6-27b",
         "llama-3.1-8b-instant",
+        "qwen/qwen3.6-27b",
+        "openai/gpt-oss-120b",
     ]
     available = set(model_ids)
     for preferred in preferred_models:
         if preferred in available:
             return preferred
     return model_ids[0] if model_ids else None
+
+
+def is_reasoning_model_name(model_name: str) -> bool:
+    name = model_name.lower()
+    return "gpt-oss" in name or "reasoning" in name or "deepseek-r1" in name
+
+
+def get_fallback_model(model_ids: list[str], failed_model: str) -> str | None:
+    """لو موديل reasoning فشل، بنرجّع أقرب موديل مستقر بديل من نفس قائمة الموديلات المتاحة."""
+    stable_priority = [
+        "llama-3.3-70b-versatile",
+        "llama-3.1-8b-instant",
+    ]
+    available = set(model_ids)
+    for candidate in stable_priority:
+        if candidate in available and candidate != failed_model:
+            return candidate
+    # لو محدش من دول متاح، هات أي موديل تاني مش reasoning
+    for candidate in model_ids:
+        if candidate != failed_model and not is_reasoning_model_name(candidate):
+            return candidate
+    return None
 
 
 def fetch_order_data(order_id: int) -> dict[str, Any]:
@@ -383,14 +408,14 @@ def normalize_classification(classification: str) -> str:
 # GROQ ANALYSIS RUNNER
 # ============================================================
 
-def analyze_order_rating(
+def _run_single_model_analysis(
     api_key: str,
     order_id: int,
     audit_type: str,
     model_name: str,
+    order_data: dict[str, Any],
 ) -> dict[str, str]:
 
-    order_data = fetch_order_data(order_id)
     client = Groq(api_key=api_key.strip())
 
     system_message = (
@@ -413,7 +438,7 @@ def analyze_order_rating(
     # "تفكير داخلي" قبل كتابة الإجابة، فلو الميزانية صغيرة (بعد تقليلها بسبب TPM)
     # ممكن يخلص التفكير الداخلي ويسيب صفر توكنز للإجابة الفعلية = رد فاضي.
     # نقلل جهد التفكير لأقل درجة عشان نضمن إن أغلب الميزانية تروح للمحتوى نفسه.
-    is_reasoning_model = "gpt-oss" in model_name.lower() or "reasoning" in model_name.lower()
+    is_reasoning_model = is_reasoning_model_name(model_name)
 
     last_error: Exception | None = None
     max_attempts = 5
@@ -508,6 +533,43 @@ def analyze_order_rating(
     raise Exception(f"فشل التحليل بعد {max_attempts} محاولات.\n\nآخر خطأ:\n{last_error}")
 
 
+def analyze_order_rating(
+    api_key: str,
+    order_id: int,
+    audit_type: str,
+    model_name: str,
+    available_models: list[str] | None = None,
+) -> dict[str, str]:
+    """
+    يشغّل التحليل على الموديل المختار. لو الموديل من نوع reasoning (زي gpt-oss)
+    وفشل تمامًا بعد كل محاولات التقليل التلقائي، بيرجع تلقائيًا لموديل مستقر بديل
+    من نفس القائمة المتاحة عند المستخدم، بدل ما يوقف العمل بالكامل.
+    يرجّع النتيجة زائد "used_model" يوضح فعليًا أي موديل اتنفّذ عليه التحليل.
+    """
+    order_data = fetch_order_data(order_id)
+
+    try:
+        result = _run_single_model_analysis(api_key, order_id, audit_type, model_name, order_data)
+        result["used_model"] = model_name
+        return result
+    except Exception as primary_exc:
+        if not (is_reasoning_model_name(model_name) and available_models):
+            raise
+
+        fallback_model = get_fallback_model(available_models, model_name)
+        if not fallback_model:
+            raise
+
+        try:
+            result = _run_single_model_analysis(api_key, order_id, audit_type, fallback_model, order_data)
+            result["used_model"] = fallback_model
+            result["fallback_from"] = model_name
+            return result
+        except Exception:
+            # لو حتى الموديل البديل فشل، نرجّع الخطأ الأصلي عشان يكون واضح إن المشكلة أعمق
+            raise primary_exc
+
+
 # ============================================================
 # SIDEBAR UI
 # ============================================================
@@ -582,7 +644,11 @@ with col2:
                         order_id=int(order_id),
                         audit_type=audit_type,
                         model_name=selected_model,
+                        available_models=available_models,
                     )
+
+                    used_model = parsed_result.get("used_model", selected_model)
+                    fallback_from = parsed_result.get("fallback_from")
 
                     st.session_state["audit_result"] = {
                         "justification": parsed_result["justification"],
@@ -590,8 +656,14 @@ with col2:
                         "classification": parsed_result["classification"],
                         "order_id": int(order_id),
                         "audit_type": audit_type,
-                        "model": selected_model,
+                        "model": used_model,
                     }
+
+                    if fallback_from:
+                        st.warning(
+                            f"⚠️ موديل ({fallback_from}) فشل في تنفيذ الطلب، "
+                            f"فتم التحويل تلقائيًا لموديل بديل مستقر ({used_model}) وتم إنجاز التحليل عليه."
+                        )
                     st.success("✅ اكتمل التدقيق بنجاح.")
 
                 except Exception as exc:
@@ -603,6 +675,8 @@ if "audit_result" in st.session_state and st.session_state["audit_result"]:
     justification = result["justification"]
     evidence = result["evidence"]
     classification = result.get("classification", "غير محدد")
+
+    st.caption(f"🤖 الموديل المستخدم فعليًا: {result.get('model', '-')}")
 
     st.markdown(f"### 📝 التبرير التشغيلي المباشر:")
     safe_justification = html.escape(justification)
