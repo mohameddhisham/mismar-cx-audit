@@ -340,13 +340,14 @@ def build_audit_prompt(
 
 5) الطول: فقرة واحدة مركزة للتبرير (justification)، 3-5 جمل بحد أقصى، بدون تكرار.
 
-6) **الأدلة (evidence) - يجب أن تكون تفصيلية وليست ملخصاً مختصراً:**
-   اكتب سرداً زمنياً كاملاً للوقائع التي تدعم السبب الرئيسي فقط، متضمناً:
-   - كل حدث/رسالة/تغيير حالة له علاقة بالسبب الرئيسي بترتيبه الزمني.
+6) **الأدلة (evidence) - سرد زمني تفصيلي بطول محدد (وليس ملخصاً من سطر واحد):**
+   اكتب سرداً زمنياً للوقائع التي تدعم السبب الرئيسي فقط، متضمناً:
+   - أهم 4-6 أحداث/رسائل/تغييرات حالة مرتبطة بالسبب الرئيسي بترتيبها الزمني.
    - التواريخ والأوقات والفوارق الزمنية بينها بالساعات/الأيام كلما توفرت في البيانات.
-   - إشارات مباشرة لمحتوى المحادثات أو التذاكر ذات الصلة (بصياغتك، مع استبدال أي اسم بـ (التشغيل)/(المركز)/(العميل)).
-   - لا تكتفِ بجملة واحدة عامة؛ استهدف 6-10 جمل أو نقاط على الأقل تغطي كامل الخط الزمني للسبب من بدايته حتى انتهائه أو حتى نهاية المرحلة.
-   ❌ ممنوع إخراج الأدلة كملخص من سطر أو سطرين. لو البيانات فيها تفاصيل كافية، لازم تظهر كاملة هنا.
+   - إشارات موجزة لمحتوى المحادثات أو التذاكر ذات الصلة (بصياغتك، مع استبدال أي اسم بـ (التشغيل)/(المركز)/(العميل)).
+   - الهدف: فقرة واحدة متماسكة بطول **يتراوح بين 120 و220 كلمة تقريباً** - لا أقل ولا أكثر. هذا حد أقصى مقصود حتى تكتمل الإجابة ولا تُقطع، فلا تحاول تغطية كل التفاصيل الممكنة، فقط الأهم منها ضمن هذا الطول.
+   ❌ ممنوع إخراج الأدلة كملخص من سطر أو سطرين.
+   ❌ ممنوع تجاوز 220 كلمة تقريباً - لو البيانات كتيرة، اختصر واختر الأهم بدل ما تسرد كل حاجة.
 
 7) الطول: فقرة التبرير (justification) قصيرة ومركزة (3-5 جمل)، أما الأدلة (evidence) فتفصيلية وأطول بكثير من التبرير.
 
@@ -459,7 +460,7 @@ def _run_single_model_analysis(
     # هنقرأ الرقم الحقيقي من رسالة الخطأ ونحسب بالظبط قد إيه نقلل، بدل رقم عشوائي ثابت.
     max_items = 200
     max_chars = 40000
-    output_tokens = 6000
+    output_tokens = 3000
 
     # موديلات reasoning زي openai/gpt-oss-* بتستهلك جزء كبير من max_tokens في
     # "تفكير داخلي" قبل كتابة الإجابة، فلو الميزانية صغيرة (بعد تقليلها بسبب TPM)
@@ -501,15 +502,24 @@ def _run_single_model_analysis(
                 raise Exception("Groq returned an empty response.")
 
             raw_content = response.choices[0].message.content or ""
+            finish_reason = getattr(response.choices[0], "finish_reason", "") or ""
 
             if not raw_content.strip():
-                finish_reason = getattr(response.choices[0], "finish_reason", "") or ""
                 raise Exception(
                     f"EMPTY_CONTENT: الرد رجع فاضي (finish_reason={finish_reason}) - "
                     f"غالباً الموديل استهلك كل الميزانية في التفكير الداخلي."
                 )
 
-            parsed = extract_json_object(raw_content)
+            try:
+                parsed = extract_json_object(raw_content)
+            except Exception as parse_exc:
+                if finish_reason == "length":
+                    # الرد مش ناقص لأنه غلط، هو اتقطع فعلياً قبل ما يقفل الـ JSON
+                    # لأن max_tokens خلص. نزوّد الميزانية ونعيد المحاولة بدل ما نفشل.
+                    raise Exception(
+                        f"TRUNCATED: تم قطع الرد قبل اكتماله بسبب نفاد max_tokens.\n{str(parse_exc)}"
+                    )
+                raise
 
             justification = sanitize_names(str(parsed.get("justification", "")).strip())
             evidence = sanitize_names(str(parsed.get("evidence", "")).strip())
@@ -539,7 +549,7 @@ def _run_single_model_analysis(
                 # بنفس النسبة المطلوبة فعليًا، بدل تخمين عشوائي
                 max_chars = max(int(max_chars * scale), 800)
                 max_items = max(int(max_items * scale), 5)
-                output_tokens = max(int(output_tokens * scale), 500)
+                output_tokens = max(int(output_tokens * scale), 900)
                 continue
 
             if error_text.startswith("EMPTY_CONTENT") and attempt < max_attempts:
@@ -551,8 +561,17 @@ def _run_single_model_analysis(
                 is_reasoning_model = True
                 continue
 
+            if error_text.startswith("TRUNCATED") and attempt < max_attempts:
+                # الرد كان صح لكنه اتقطع فعلياً قبل ما يخلص. نزوّد output_tokens
+                # (مش نقلله زي حالة TPM)، ونقلل شوية من بيانات الإدخال عشان
+                # نفضي مساحة أكبر للمخرجات ضمن نفس سقف TPM الكلي للطلب.
+                output_tokens = min(int(output_tokens * 1.6), 8000)
+                max_chars = max(int(max_chars * 0.85), 800)
+                max_items = max(int(max_items * 0.85), 5)
+                continue
+
             # مش خطأ قابل للتصحيح تلقائيًا، أو خلصنا المحاولات
-            clean_error_text = error_text.replace("EMPTY_CONTENT: ", "")
+            clean_error_text = error_text.replace("EMPTY_CONTENT: ", "").replace("TRUNCATED: ", "")
             raise Exception(
                 f"خطأ في الاتصال بالذكاء الاصطناعي عبر Groq ({model_name}):\n{clean_error_text}"
             )
